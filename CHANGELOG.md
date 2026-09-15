@@ -2,6 +2,8 @@
 
 ## 0.2.0
 
+- crates.io 包名为 `resopt-cli`，命令名和 Rust 库名保留 `resopt`。
+
 - 扩展 `scan` 到资源目录内外，按文件头识别图片实际编码；`--catalog-only` 保留旧版输出。
 - 新增 `analyze`，通过 macOS ImageIO 解码 PNG、HEIC、JPEG、WebP 等图片，检测实际透明像素。
 - 不透明图片比较 JPEG 与 HEIC；透明图片比较 HEIC，PNG 另提供严格无损候选。

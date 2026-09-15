@@ -8,7 +8,14 @@ Numi 独立负责资源代码生成，`resopt` 不依赖它。
 
 ## 安装
 
-在仓库根目录执行：
+crates.io 包名为 **`resopt-cli`**，安装后的命令仍是 **`resopt`**：
+
+```sh
+cargo install resopt-cli --locked
+resopt doctor
+```
+
+从源码安装时，在仓库根目录执行：
 
 ```sh
 cargo install --path . --locked
@@ -166,6 +173,8 @@ resopt apply /tmp/resopt-review && numi generate --workspace
 当前无损 PNG 后端保留资源名，因此生成的访问代码通常不变；不会隐式执行 Numi。
 
 ## Rust API
+
+通过 `cargo add resopt-cli` 添加依赖，Rust 库名仍为 `resopt`。
 
 ```rust,no_run
 use resopt::{AnalysisOptions, Policy, analyze, create_plan, inventory};

@@ -573,7 +573,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "resopt"
+name = "resopt-cli"
 version = "0.2.0"
 dependencies = [
  "anyhow",

@@ -12,7 +12,11 @@ use std::{
 };
 
 #[derive(Parser)]
-#[command(version, about = "Reviewable resource optimization for Apple projects")]
+#[command(
+    name = "resopt",
+    version,
+    about = "Reviewable resource optimization for Apple projects"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,

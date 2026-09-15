@@ -1,5 +1,5 @@
 [package]
-name = "resopt"
+name = "resopt-cli"
 version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
@@ -7,9 +7,17 @@ description = "Plan, verify, and apply resource optimizations for Apple projects
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/wenext-limited/resopt"
-documentation = "https://github.com/wenext-limited/resopt#readme"
+documentation = "https://docs.rs/resopt-cli"
 keywords = ["xcode", "xcassets", "png", "optimization", "cli"]
 categories = ["command-line-utilities", "multimedia::images"]
+
+[lib]
+name = "resopt"
+path = "src/lib.rs"
+
+[[bin]]
+name = "resopt"
+path = "src/main.rs"
 
 [dependencies]
 anyhow = "1"
