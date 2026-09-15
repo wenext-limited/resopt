@@ -1,0 +1,26 @@
+[package]
+name = "resopt"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Plan, verify, and apply resource optimizations for Apple projects."
+license = "MIT"
+readme = "README.md"
+keywords = ["xcode", "xcassets", "png", "optimization", "cli"]
+categories = ["command-line-utilities", "multimedia::images"]
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4.6", features = ["derive"] }
+oxipng = { version = "=10.2.1", default-features = false, features = ["parallel"] }
+png = "0.18"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+tempfile = "3"
+toml = "0.8"
+walkdir = "2"
+xcassets = "0.2"
+
+[dev-dependencies]
+crc32fast = "1"
