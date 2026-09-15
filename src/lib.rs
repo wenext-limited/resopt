@@ -6,10 +6,19 @@
 
 #![doc = include_str!("../README.md")]
 
+mod analysis;
 mod catalog;
 mod filesystem;
+mod image_backend;
 mod optimizer;
 mod plan;
+mod resources;
+pub use analysis::{
+    AnalysisOptions, AnalysisReport, ImageCandidate, ResourceAnalysis, analyze,
+    analyze_with_progress,
+};
+pub use image_backend::{ImageDifference, ImageInfo, image_backend_available};
+pub use resources::{Resource, ResourceInventory, inventory};
 
 pub use catalog::{Asset, Inventory, scan};
 pub use optimizer::Policy;

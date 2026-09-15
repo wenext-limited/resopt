@@ -402,7 +402,7 @@ fn cli_json_can_be_piped_and_errors_are_nonzero() {
     let (root, _, _, directory) = fixture();
     let binary = env!("CARGO_BIN_EXE_resopt");
     let scan = Command::new(binary)
-        .args(["scan", "--json"])
+        .args(["scan", "--json", "--catalog-only"])
         .arg(root.path())
         .output()
         .unwrap();

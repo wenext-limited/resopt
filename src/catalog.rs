@@ -107,7 +107,7 @@ pub fn scan(root: impl AsRef<Path>) -> Result<Inventory> {
     Ok(inventory)
 }
 
-fn excluded(name: &str) -> bool {
+pub(crate) fn excluded(name: &str) -> bool {
     matches!(
         name,
         ".git"

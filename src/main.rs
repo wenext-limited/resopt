@@ -1,6 +1,8 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use resopt::{Policy, apply, create_plan, restore, scan};
+use resopt::{
+    AnalysisOptions, Policy, analyze_with_progress, apply, create_plan, inventory, restore, scan,
+};
 use serde::Serialize;
 use std::{
     fs,
@@ -23,10 +25,34 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Inventory referenced catalog resources without encoding or changing files.
+    /// Inventory all resource files, including loose files and actual image formats.
     Scan {
         #[arg(default_value = ".")]
         root: PathBuf,
+        #[arg(long)]
+        json: bool,
+        /// Use the legacy catalog-rendition-only inventory.
+        #[arg(long)]
+        catalog_only: bool,
+    },
+    /// Probe all images and compare lossless PNG / JPEG / HEIC candidates without modifying sources.
+    Analyze {
+        #[arg(default_value = ".")]
+        root: PathBuf,
+        /// New output directory outside the project: JSON, HTML, previews, candidates.
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long, value_delimiter = ',', default_value = "75,85,95")]
+        qualities: Vec<u8>,
+        #[arg(long, default_value_t = 2)]
+        jobs: usize,
+        #[arg(long, default_value_t = 0)]
+        min_input_bytes: u64,
+        #[arg(long)]
+        probe_only: bool,
+        /// Maximum per-pixel alpha error (0 is exact).
+        #[arg(long, default_value_t = 1.0 / 255.0 + 0.000001)]
+        max_alpha_error: f32,
         #[arg(long)]
         json: bool,
     },
@@ -80,7 +106,10 @@ fn run(cli: Cli) -> Result<()> {
             let report = serde_json::json!({
                 "schema_version": 1,
                 "resopt": env!("CARGO_PKG_VERSION"),
-                "backends": [{"name":"oxipng", "version":"10.2.1", "status":"embedded", "mode":"strict_lossless_png"}],
+                "backends": [
+                    {"name":"oxipng", "version":"10.2.1", "status":"embedded", "mode":"strict_lossless_png"},
+                    {"name":"Apple ImageIO", "available":resopt::image_backend_available(), "mode":"image_analysis_jpeg_heic"}
+                ],
                 "optional_tools": [
                     {"name":"sips", "available":std::path::Path::new("/usr/bin/sips").is_file(), "backend_implemented":false},
                     {"name":"ffmpeg", "available":available("ffmpeg"), "backend_implemented":false},
@@ -94,6 +123,15 @@ fn run(cli: Cli) -> Result<()> {
                 writeln!(
                     stdout,
                     "PNG: embedded Oxipng 10.2.1; no separate executable required"
+                )?;
+                writeln!(
+                    stdout,
+                    "JPEG/HEIC analysis: {}",
+                    if resopt::image_backend_available() {
+                        "Apple ImageIO (native; no sips/ffmpeg install required)"
+                    } else {
+                        "requires macOS; scan and lossless PNG plan remain available"
+                    }
                 )?;
                 for tool in report["optional_tools"]
                     .as_array()
@@ -112,7 +150,11 @@ fn run(cli: Cli) -> Result<()> {
                 }
             }
         }
-        Commands::Scan { root, json } => {
+        Commands::Scan {
+            root,
+            json,
+            catalog_only: true,
+        } => {
             let inventory = scan(root)?;
             if json {
                 output_json(&mut stdout, &inventory)?;
@@ -139,6 +181,88 @@ fn run(cli: Cli) -> Result<()> {
                 }
                 for diagnostic in &inventory.diagnostics {
                     eprintln!("warning: {diagnostic}");
+                }
+            }
+        }
+        Commands::Scan {
+            root,
+            json,
+            catalog_only: false,
+        } => {
+            let report = inventory(root)?;
+            if json {
+                output_json(&mut stdout, &report)?;
+            } else {
+                writeln!(
+                    stdout,
+                    "{} catalogs; {} resource files; {} source/tooling files excluded",
+                    report.catalogs,
+                    report.assets.len(),
+                    report.skipped_source_or_tooling_files
+                )?;
+                for resource in &report.assets {
+                    writeln!(
+                        stdout,
+                        "{}\t{} bytes\t{}\t{}{}",
+                        resource.path.display(),
+                        resource.bytes,
+                        resource.kind,
+                        resource.format,
+                        if resource.extension_mismatch {
+                            " (extension mismatch)"
+                        } else {
+                            ""
+                        }
+                    )?;
+                }
+                for diagnostic in &report.diagnostics {
+                    eprintln!("warning: {diagnostic}");
+                }
+            }
+        }
+        Commands::Analyze {
+            root,
+            out,
+            qualities,
+            jobs,
+            min_input_bytes,
+            probe_only,
+            max_alpha_error,
+            json,
+        } => {
+            let options = AnalysisOptions {
+                qualities,
+                jobs,
+                min_input_bytes,
+                probe_only,
+                max_alpha_error,
+                ..AnalysisOptions::default()
+            };
+            let report = analyze_with_progress(root, &out, options, |done, total| {
+                if done % 25 == 0 || done == total {
+                    eprintln!("analyze {done}/{total}");
+                }
+            })?;
+            if json {
+                output_json(&mut stdout, &report)?;
+            } else {
+                writeln!(
+                    stdout,
+                    "Analyzed {} resources; {} with image candidates; {} potential source bytes saved",
+                    report.resources.len(),
+                    report
+                        .status_counts
+                        .get("candidates_available")
+                        .unwrap_or(&0),
+                    report.potential_source_bytes_saved
+                )?;
+                writeln!(
+                    stdout,
+                    "Review {}/report.html and analysis.json. Lossy candidates require visual review; sources were not modified.",
+                    out.display()
+                )?;
+                for (status, count) in &report.status_counts {
+                    writeln!(stdout, "{status}: {count}")?;
                 }
             }
         }

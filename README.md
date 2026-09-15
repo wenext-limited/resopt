@@ -1,68 +1,136 @@
 # resopt
 
-面向 Apple 项目的资源优化工具，同时提供 Rust 库和命令行接口，支持先审阅、再应用。
+面向 Apple 项目的资源检测与优化工具，提供 Rust 库和命令行接口。
 
-`resopt` 从 `.xcassets` 中发现被引用的资源文件，生成优化候选，验证解码后的像素和元数据，
-然后按审阅过的结果替换文件，并保留可恢复的原件。资源目录由 `xcassets` 解析，
-PNG 优化使用内嵌的 Oxipng。Numi 继续独立负责资源代码生成。
+`scan` 清点资源目录内外的资源，识别图片的实际编码；`analyze` 真正解码图片，检查透明像素，
+试算不同格式与质量的候选，并生成带预览的报告。现有 `plan / apply / restore` 提供严格无损 PNG 的可恢复修改流程。
+Numi 独立负责资源代码生成，`resopt` 不依赖它。
 
-## 首版功能
+## 安装
 
-- 递归发现资源目录，包括 Swift 包内的 `.xcassets`。
-- 对静态 PNG 重新压缩，保留文件名、解码后的像素数据、位深、颜色类型、隔行扫描设置、
-  调色板和所有非 IDAT 数据块。
-- 提供便于人工阅读的报告和 JSON 输出。
-- 通过 TOML 策略设置优化力度和最低体积收益。
-- 保存优化计划，包含源文件与资源目录元数据的哈希、候选文件和原件。
-- 应用与恢复前检查整个批次，逐文件原子替换，并提供锁和操作日志。
-
-**报告中的节省量是源文件字节数。** 当前版本不测量编译后的 `Assets.car`、IPA、
-App Store 下载体积、解码速度或内存占用。Xcode 可能重新压缩资源目录中的输入文件，
-因此源文件缩小不一定意味着最终 App 同比例缩小。
-
-## 从源码安装
-
-在本仓库根目录执行：
+在仓库根目录执行：
 
 ```sh
 cargo install --path . --locked
 resopt doctor
 ```
 
-构建需要 Rust 1.88+ 和 C 编译器，后者用于编译内嵌的 libdeflate 依赖。
-当前 PNG 工作流不要求另外安装 Oxipng、sips 或 FFmpeg 可执行文件。
-`doctor` 会检查未来后端可能使用的媒体工具，但不会安装它们，也不会调用它们进行优化。
+构建需要 Rust 1.88+ 和 C 编译器（用于 libdeflate）。严格无损 PNG 后端内嵌 Oxipng。
+JPEG／HEIC 分析目前使用 **macOS ImageIO 与 CoreGraphics**，不需要额外安装 sips、FFmpeg 或 Swift 工具链。
+其他平台可以清点资源，并使用原有的 PNG 计划与应用流程。
 
-## 使用流程
+部分受限沙箱会阻止系统 HEIC 编码器。正式分析前会实际试编码 JPEG 和 HEIC；不可用时会明确报错，
+不会把“没有成功编码”伪装成“没有优化空间”。`--probe-only` 可用于不编码的检测。
+
+## 全资源扫描
 
 ```sh
-# 只读扫描，不编码，也不修改项目。
 resopt scan /path/to/project
 resopt scan /path/to/project --json > inventory.json
+```
 
-# 生成候选文件；输出目录必须尚不存在，其父目录必须已经存在。
+扫描范围包括：
+
+- `.xcassets` 引用的资源、目录元数据、未引用文件和暂不支持的资源节点中的文件。
+- 目录外的图片、音视频、SVGA/VAP 等动效、字体、压缩包、数据文件、本地化文件和未分类文件。
+- Pods、Carthage、node_modules 中的资源文件。
+
+图片依据文件头识别 PNG、JPEG、HEIC/HEIF、WebP、GIF、TIFF、BMP、AVIF 等格式，
+并报告扩展名与编码不一致的情况。例如，扩展名为 `.png` 的 WebP 会进入 WebP 分析路径。
+无法从文件头识别的格式会先按扩展名分类，后续解码失败会单独报告。
+
+**文件清点不等于构建目标分析。** 清单可能包含未被 App 打包的文件，压缩包内部也不会自动展开。
+已知源码、构建配置和工具文件会排除；VCS、构建缓存、嵌套 worktree、工具配置目录不会遍历。
+报告列出实际排除的目录以及源码／工具文件的排除数量。符号链接不跟随，不可读文件会产生诊断。
+
+如需兼容旧版的“仅列出资源目录引用文件”结果：
+
+```sh
+resopt scan /path/to/project --catalog-only --json
+```
+
+## 图片分析：JPEG 与 HEIC
+
+```sh
+# 默认试算所有尺寸的图片，不再设置 50 KiB 门槛。
+resopt analyze /path/to/project --out /tmp/resopt-analysis
+
+# 显式指定质量档位与并发数。
+resopt analyze /path/to/project --out /tmp/resopt-analysis-2 \
+  --qualities 75,85,95 --jobs 2
+
+# 只解码检查格式、尺寸、帧数和透明像素，不进行编码。
+resopt analyze /path/to/project --out /tmp/resopt-probe --probe-only
+
+# 要求候选 Alpha 与原图完全一致。
+resopt analyze /path/to/project --out /tmp/resopt-exact-alpha --max-alpha-error 0
+```
+
+输出目录必须尚不存在，父目录必须存在，且必须位于待扫描项目之外。
+默认 `min_input_bytes = 0`，因此小图片也会尝试；如有需要，可显式传入 `--min-input-bytes`。
+
+### 格式选择
+
+| 实际像素状态 | 比较的格式 |
+| --- | --- |
+| 没有透明像素，包括“带 Alpha 通道但 Alpha 全满” | JPEG、HEIC；原格式为 PNG 时另比较严格无损 PNG |
+| 有透明或半透明像素 | HEIC；原格式为 PNG 时另比较严格无损 PNG；不生成 JPEG 候选 |
+| 已经是 HEIC | 同样解码检查透明度，并按上述规则重新试算 |
+
+默认 JPEG／HEIC 质量档位为 **75、85、95**。数值是编码器质量参数，既不是体积节省比例，
+也不是可以跨格式直接比较的视觉质量分数。JPEG／HEIC 候选明确标为有损。
+
+每个候选都会重新解码，验证尺寸、方向、帧数和透明状态，并计算：
+
+- 在统一 sRGB 预乘 Alpha 像素上的 RGB 平均绝对误差（MAE，按 0–255 标度显示）。
+- 同一像素空间上的 PSNR；像素相同时显示无穷大。
+- 单个像素最大的 Alpha 误差（0–1 标度）。
+
+这些指标帮助筛选，不替代视觉审阅。完全透明像素的隐藏 RGB 不影响此处的有损画质比较。
+HEIC 有损编码可能让 Alpha 相差一个 8 位量化级；默认上限为 `1/255 + 0.000001`，
+允许这一级量化及浮点计算误差，同时拒绝整体透明状态的变化。
+`--max-alpha-error 0` 要求 Alpha 精确一致；该设置不会改变原有严格无损 PNG 的像素保留约束。
+
+### 报告与候选文件
+
+输出目录包含：
+
+- `analysis.json`：全部资源、检测状态、问题、每个格式／质量的实际体积和误差。
+- `report.html`：可离线查看的中文报告，含原图与候选缩略图；点击可打开原尺寸文件。
+- `originals/`、`candidates/`、`previews/`：有体积收益的有效候选及对应原图和预览。
+
+较大、超出 Alpha 上限或编码失败的候选仍在 JSON／HTML 中记录原因，但不会被推荐为可采用结果。
+`smallest_candidate` 只表示通过结构与 Alpha 检查后体积最小的候选，**不表示画质已经验收**。
+总节省量按每个文件仅取一个最小候选计算；有损候选可能采用不同质量档位。
+
+**分析不会修改项目。** 报告不是 `apply` 可执行的计划。
+JPEG／HEIC 的跨格式替换、`Contents.json` 更新、目录外文件引用改写和对应恢复事务尚未接入 `apply`。
+这避免在仅审阅候选时改动真实资源或破坏文件名引用。
+
+### 分析边界
+
+- 每张图片输入上限为 64 MiB，统一浮点解码缓冲上限为 64 MiB；超限会明确报告。
+- 多帧图片记录帧数和首帧检测信息，但不会转成单帧 JPEG／HEIC。
+- AppIcon、已识别的 `resizing` 资源会解码检查，但不会生成格式转换候选。
+- 音视频、动效、字体、压缩包、矢量图、数据文件等纳入清单，状态为 `inventory_only`，
+  原因注明对应优化后端尚未实现；不会重新编码这些类型或修改容器内部内容。
+- JPEG／HEIC 检查不承诺原始元数据的字节级保留；严格无损 PNG 则保留非 IDAT 块及其顺序。
+- 有错误、跳过项或不支持的类型时，报告会保留它们。命令成功不代表每个文件都已优化。
+
+## 严格无损 PNG：计划、应用和恢复
+
+```sh
 resopt plan /path/to/project --out /tmp/resopt-review
-
-# 查看按收益排序的报告，以及 plan.json、originals/ 和 candidates/。
-# 执行 apply 表示明确同意写入已经审阅的修改。
 resopt apply /tmp/resopt-review
-
-# 对已经与候选结果一致的文件，重复 apply 不会再次修改。
-# 如需保留恢复能力，请保留整个审阅目录。
 resopt restore /tmp/resopt-review
 ```
 
-所有命令都支持 `--json`。报告写入标准输出，面向人工阅读的诊断和错误写入标准错误。
-JSON 格式的扫描与计划报告会把诊断信息放在文档中。
-命令成功返回 `0`，操作失败返回 `1`，命令行用法错误返回 `2`。
-扫描或生成计划成功时，仍可能有文件被跳过：请查看 `diagnostics` 和 `skipped`，
-不要把命令成功理解为所有资源都已处理。
+这个既有流程仍只处理资源目录引用的静态 PNG，文件名和资源名不变。
+规划时优化发生在内存中，只写入新的计划目录；每个候选经过独立 PNG 解码，
+逐字节比较像素数据，并检查全部非 IDAT 块及其相对于首个 IDAT 的顺序。
+完全透明像素的隐藏 RGB 也保留，位深、颜色类型、调色板和隔行扫描设置不变。
 
-### 优化策略
-
-```sh
-resopt plan /path/to/project --policy resopt.example.toml --out /tmp/resopt-review
-```
+默认策略与 `resopt.example.toml` 一致：
 
 ```toml
 png_level = 2
@@ -71,82 +139,48 @@ min_savings_bytes = 1024
 min_savings_percent = 1.0
 ```
 
-默认值与上例一致。仅在传入 `--policy` 时加载指定的策略文件。
-`png_level` 控制优化力度，不代表视觉质量。候选文件必须比原件小，
-并且同时达到最低节省字节数与最低节省百分比。
-未知配置字段会报错，因此类似 `quality = 75` 的有损压缩设置不会被静默忽略或错误应用。
-当前版本尚未实现有损压缩。
+```sh
+resopt plan /path/to/project --policy resopt.example.toml --out /tmp/resopt-review-2
+```
 
-### 与 Numi 组合使用
+`png_level` 是优化力度而非视觉质量；文件必须变小并同时达到两个收益门槛。
+只有传入 `--policy` 才加载配置；未知字段会报错。这个策略与 `analyze --qualities` 的有损试算相互独立。
 
-如果工作流需要重新生成资源访问代码，可在项目根目录执行：
+应用前会检查整个批次的源文件、资源目录和候选哈希，逐文件写入前还会再次核对。
+每个替换使用同目录临时文件与原子重命名，但整个批次不是单个原子事务。
+原件预先保存，`journal.jsonl` 记录操作；保留整个计划目录即可在部分完成后恢复。
+重复应用或恢复不会重复修改已符合目标的文件，后续用户编辑和过期目录元数据会阻止覆盖。
+普通文件权限会保留，时间戳、扩展属性和硬链接关系不会保留。
+
+操作期间不要并发编辑同一资源树。`.lock` 与项目根目录的 `.resopt.lock` 用于避免并发写入；
+异常退出后，确认进程不再运行再清理遗留锁。移动项目后需要重新生成计划。
+
+## 与 Numi 配合
+
+在目标项目根目录按需运行：
 
 ```sh
 resopt apply /tmp/resopt-review && numi generate --workspace
 ```
 
-当前 PNG 后端保留文件名和资源名，因此重新生成的访问代码通常不会变化。
-`resopt` 不依赖 Numi，也不会隐式运行代码生成器。
+当前无损 PNG 后端保留资源名，因此生成的访问代码通常不变；不会隐式执行 Numi。
 
-## 安全约束
-
-生成计划时，优化过程在内存中进行，只向新建的计划目录写入文件。
-每个入选候选都必须通过独立的 PNG 解码，并逐字节比较解码后的像素数据。
-所有非 IDAT 数据块及其相对于首个 IDAT 的顺序必须一致。
-这会主动拒绝一些会重写元数据的有效优化。
-完全透明像素的 RGB 值也会保留；位深、调色板和颜色类型的缩减均已禁用。
-
-应用前会先检查所有条目，核对当前资源是否仍符合处理条件、`Contents.json` 哈希、
-源文件哈希、候选与原件哈希、文件大小、元数据和解码后的像素数据。
-每个文件在写入前还会再次检查。
-当前源文件可以与原件或计划中的候选结果一致，从而支持重复应用和部分完成后的恢复。
-恢复操作遵循同样的规则；如果用户后来修改了文件，或资源目录元数据已经变化，就会拒绝覆盖。
-
-每次替换都在源文件同目录创建临时文件，再通过原子重命名完成，并保留普通文件权限。
-**整个多文件批次并非一个原子事务。** 原件会在应用前保存，
-`journal.jsonl` 会记录每次替换的开始和完成。
-如果 I/O 错误中断了批次，请保留审阅目录并执行 `restore`。
-即使最后一条日志尚未写入，恢复操作也能通过哈希识别已经完成的部分。
-文件系统时间戳、扩展属性和硬链接关系不会保留。
-
-应用与恢复时会临时创建计划目录下的 `.lock` 和项目根目录下的 `.resopt.lock`。
-进程异常终止后，应先确认它已不再运行，再删除遗留锁文件。
-操作期间不要并发编辑源文件、修改符号链接，或对根目录存在交集的项目同时执行优化。
-该工具面向本地开发工作流，不提供抵御恶意并发文件系统修改的安全沙箱。
-计划记录项目根目录的绝对路径；项目移动后需要重新生成计划。
-
-## 扫描范围与排除规则
-
-- 仅统计资源目录明确引用的资源变体文件。尚不扫描目录外的独立资源文件，
-  也不根据磁盘发现结果推断资源属于哪个构建目标。
-- 跳过 `.git`、`.worktrees`、`.worktree`、`.build`、`.swiftpm`、`.resopt`、
-  `target`、`build`、`DerivedData`、`Pods`、`Carthage` 和 `node_modules` 目录。
-- AppIcon、带有 `resizing` 元数据的资源及非 PNG 资源会列入报告，但不参与优化。
-- APNG、格式错误的 PNG 和验证失败的候选会被跳过，并记录原因。
-  生成计划时，单张 PNG 的输入上限为 64 MiB，解码数据上限为 256 MiB。
-- 包含符号链接或不可读条目的资源目录会被跳过。
-  引用文件名中的路径穿越、候选与原件路径中的符号链接，以及缺失文件都会被拒绝。
-- 不支持的资源目录节点类型会产生诊断信息。
-  当前不删除未使用资源、不改写源码、不推断最低系统版本，也不转换文件扩展名。
-
-## 作为 Rust 库使用
+## Rust API
 
 ```rust,no_run
-use resopt::{Policy, create_plan, apply, restore};
+use resopt::{AnalysisOptions, Policy, analyze, create_plan, inventory};
 
-let plan = create_plan("/path/to/project", "/tmp/resopt-review", Policy::default())?;
-println!("{} 个候选，可节省 {} 字节源文件", plan.candidates.len(), plan.savings_bytes());
-// 审阅已保存的计划后再应用：
-let report = apply("/tmp/resopt-review")?;
-restore("/tmp/resopt-review")?;
+let resources = inventory("/path/to/project")?;
+let analysis = analyze("/path/to/project", "/tmp/resopt-analysis", AnalysisOptions::default())?;
+let lossless_plan = create_plan("/path/to/project", "/tmp/resopt-review", Policy::default())?;
 # Ok::<(), anyhow::Error>(())
 ```
 
-计划格式带有版本号（`schema_version = 1`）。`read_plan` 验证其结构；
-应用与恢复时还会验证保存的文件和当前项目状态。
-请把整个计划目录作为一个整体保存，不要只复制 `plan.json`。
+原有 `scan()` Rust API 仍返回旧版资源目录引用清单；全资源入口为 `inventory()`。
+命令均支持 `--json`，标准输出用于报告，标准错误用于进度与错误。
+成功返回 0，操作失败返回 1，用法错误返回 2；消费报告时请检查状态与诊断字段。
 
-## 开发与验证
+## 验证与体积口径
 
 ```sh
 cargo fmt --all --check
@@ -155,18 +189,13 @@ cargo test --all-targets
 cargo test --doc
 ```
 
-测试覆盖实际编码与解码往返、16 位像素数据、透明像素中的 RGB 值、元数据、跳过规则、
-Unicode 路径、过期计划、损坏的候选，以及内容不安全但哈希已被重新计算的候选。
-还覆盖符号链接、锁、部分应用、恢复和 CLI JSON 输出。
-CI 已配置 Linux、macOS 和 Windows；本地验证通过不代表远端 CI 已通过。
+macOS 图片编码测试需要能够访问系统 HEIC 编码器；不应在阻止编码服务的沙箱中运行。
+原有跨平台 PNG 测试继续保留；新增测试覆盖实际透明像素、透明 HEIC、已有 HEIC、错误扩展名、
+资源目录外文件、小图片、损坏图片、候选路由及报告生成。
 
-## 后续支持
-
-后续计划支持 JPEG 优化、经批准的有损图片候选、HEIC 转换、普通音视频优化，
-以及能够识别构建目标的资源发现。
-SVGA、VAP 等特殊动效容器需要各自明确的格式约束。
-编译后资源目录的体积测量应作为独立、按需启用的验证阶段。
+**所有收益均为源文件字节数。** 不证明 `Assets.car`、IPA、App Store 下载体积、解码速度或内存用量会改善。
+资源是否进入目标 App，以及编译后的体积差异，需要单独验证。
 
 ## 许可证
 
-MIT。各依赖保留自己的许可证。首版未引入 Imagequant 或 GPL 依赖。
+MIT。各依赖保留其许可证。未引入 Imagequant 或 GPL 依赖。

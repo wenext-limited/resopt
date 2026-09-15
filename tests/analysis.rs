@@ -1,0 +1,278 @@
+use resopt::{AnalysisOptions, analyze, inventory};
+use std::{fs, path::Path};
+
+fn png(alpha: u8) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, 64, 64);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(png::Compression::NoCompression);
+        let mut pixels = Vec::new();
+        for i in 0..64 * 64 {
+            pixels.extend_from_slice(&[
+                (i % 255) as u8,
+                80,
+                100,
+                if i % 2 == 0 { alpha } else { 255 },
+            ]);
+        }
+        encoder
+            .write_header()
+            .unwrap()
+            .write_image_data(&pixels)
+            .unwrap();
+    }
+    bytes
+}
+
+fn write(root: &Path, relative: &str, bytes: &[u8]) {
+    let path = root.join(relative);
+    fs::create_dir_all(path.parent().unwrap()).unwrap();
+    fs::write(path, bytes).unwrap();
+}
+
+#[test]
+fn inventory_includes_loose_catalog_data_and_unknown_resources() {
+    let root = tempfile::tempdir().unwrap();
+    write(root.path(), "Resources/tiny.png", &png(255));
+    write(root.path(), "Resources/effect.svga", b"effect");
+    write(root.path(), "Resources/video.mp4", b"video");
+    write(root.path(), "Resources/sound.mp3", b"audio");
+    write(root.path(), "Resources/data.zip", b"archive");
+    write(root.path(), "Resources/font.otf", b"font");
+    write(root.path(), "Resources/custom.xyz", b"unknown");
+    write(root.path(), "Resources/config.yaml", b"runtime: true");
+    write(
+        root.path(),
+        "Assets.xcassets/blob.dataset/Contents.json",
+        br#"{"data":[{"filename":"file.bin","idiom":"universal"}]}"#,
+    );
+    write(
+        root.path(),
+        "Assets.xcassets/blob.dataset/file.bin",
+        b"binary",
+    );
+    write(root.path(), "View.swift", b"source");
+    write(root.path(), ".build/ignored.png", &png(255));
+    write(root.path(), "Pods/Library/Resources/image.png", &png(255));
+    let report = inventory(root.path()).unwrap();
+    assert_eq!(report.assets.len(), 11);
+    assert!(
+        report
+            .assets
+            .iter()
+            .any(|a| a.origin == "loose_file" && a.kind == "image")
+    );
+    assert!(report.assets.iter().any(|a| a.kind == "unclassified"));
+    assert!(report.assets.iter().any(|a| a.path.ends_with("file.bin")));
+    assert_eq!(report.skipped_source_or_tooling_files, 1);
+}
+
+#[test]
+fn format_is_detected_from_bytes_even_with_wrong_extension() {
+    let root = tempfile::tempdir().unwrap();
+    write(root.path(), "opaque.heic", &png(255));
+    write(root.path(), "broken.png", b"\x00\x00\x00\x00ftyp1234567890");
+    let report = inventory(root.path()).unwrap();
+    let asset = report
+        .assets
+        .iter()
+        .find(|a| a.path.ends_with("opaque.heic"))
+        .unwrap();
+    assert_eq!(asset.format, "png");
+    assert!(asset.extension_mismatch);
+}
+
+#[test]
+fn analysis_refuses_output_inside_project_and_invalid_qualities() {
+    let root = tempfile::tempdir().unwrap();
+    assert!(
+        analyze(
+            root.path(),
+            root.path().join("output"),
+            AnalysisOptions::default()
+        )
+        .is_err()
+    );
+    assert!(!root.path().join("output").exists());
+    assert!(
+        analyze(
+            root.path(),
+            root.path().join("output"),
+            AnalysisOptions {
+                qualities: vec![0],
+                ..AnalysisOptions::default()
+            }
+        )
+        .is_err()
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn analysis_inspects_small_images_and_routes_by_actual_alpha() {
+    let root = tempfile::tempdir().unwrap();
+    let input = root.path().join("project");
+    let opaque = png(255);
+    assert!(opaque.len() < 51200);
+    let transparent = png(128);
+    write(&input, "opaque.png", &opaque);
+    write(&input, "transparent.png", &transparent);
+    let out = root.path().join("report");
+    let report = analyze(
+        &input,
+        &out,
+        AnalysisOptions {
+            qualities: vec![75, 85, 95],
+            ..AnalysisOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(report.resources.len(), 2);
+    let opaque_result = report
+        .resources
+        .iter()
+        .find(|r| r.resource.path.ends_with("opaque.png"))
+        .unwrap();
+    let transparent_result = report
+        .resources
+        .iter()
+        .find(|r| r.resource.path.ends_with("transparent.png"))
+        .unwrap();
+    assert!(!opaque_result.image.as_ref().unwrap().has_transparent_pixels);
+    assert!(
+        transparent_result
+            .image
+            .as_ref()
+            .unwrap()
+            .has_transparent_pixels
+    );
+    assert_eq!(
+        opaque_result
+            .candidates
+            .iter()
+            .filter(|c| c.format == "jpeg")
+            .count(),
+        3
+    );
+    assert_eq!(
+        opaque_result
+            .candidates
+            .iter()
+            .filter(|c| c.format == "heic")
+            .count(),
+        3
+    );
+    assert!(
+        transparent_result
+            .candidates
+            .iter()
+            .all(|c| c.format != "jpeg")
+    );
+    assert_eq!(
+        transparent_result
+            .candidates
+            .iter()
+            .filter(|c| c.format == "heic" && c.valid)
+            .count(),
+        3,
+        "{:?}",
+        transparent_result.candidates
+    );
+    assert_eq!(fs::read(input.join("opaque.png")).unwrap(), opaque);
+    assert_eq!(
+        fs::read(input.join("transparent.png")).unwrap(),
+        transparent
+    );
+    assert!(out.join("report.html").exists());
+    assert!(out.join("analysis.json").exists());
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn existing_heic_is_decoded_and_compared_again() {
+    let root = tempfile::tempdir().unwrap();
+    let input = root.path().join("project");
+    write(&input, "source.png", &png(128));
+    let status = std::process::Command::new("/usr/bin/sips")
+        .args(["-s", "format", "heic"])
+        .arg(input.join("source.png"))
+        .arg("--out")
+        .arg(input.join("existing.heic"))
+        .output()
+        .unwrap();
+    assert!(status.status.success());
+    fs::remove_file(input.join("source.png")).unwrap();
+    let report = analyze(
+        &input,
+        root.path().join("report"),
+        AnalysisOptions {
+            qualities: vec![85],
+            ..AnalysisOptions::default()
+        },
+    )
+    .unwrap();
+    let image = &report.resources[0];
+    assert_eq!(image.resource.format, "heic");
+    assert!(image.image.as_ref().unwrap().has_transparent_pixels);
+    assert!(
+        image
+            .candidates
+            .iter()
+            .any(|c| c.format == "heic" && c.bytes > 0)
+    );
+    assert!(image.candidates.iter().all(|c| c.format != "jpeg"));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn corrupt_image_is_reported_without_stopping_inventory() {
+    let root = tempfile::tempdir().unwrap();
+    let input = root.path().join("project");
+    write(&input, "bad.heic", b"broken");
+    write(&input, "good.png", &png(255));
+    let report = analyze(
+        &input,
+        root.path().join("report"),
+        AnalysisOptions {
+            probe_only: true,
+            ..AnalysisOptions::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(report.status_counts.get("failed"), Some(&1));
+    assert_eq!(report.status_counts.get("inspected"), Some(&1));
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn animated_png_is_inspected_without_flattening() {
+    let root = tempfile::tempdir().unwrap();
+    let input = root.path().join("project");
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, 2, 2);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_animated(2, 0).unwrap();
+        let mut writer = encoder.write_header().unwrap();
+        writer.write_image_data(&[255; 16]).unwrap();
+        writer.write_image_data(&[128; 16]).unwrap();
+    }
+    write(&input, "animated.png", &bytes);
+    let report = analyze(
+        &input,
+        root.path().join("report"),
+        AnalysisOptions::default(),
+    )
+    .unwrap();
+    assert_eq!(report.resources[0].image.as_ref().unwrap().frames, 2);
+    assert!(report.resources[0].candidates.is_empty());
+    assert!(
+        report.resources[0]
+            .issues
+            .iter()
+            .any(|s| s == "multiple_frames_not_transcoded")
+    );
+}

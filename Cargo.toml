@@ -1,11 +1,13 @@
 [package]
 name = "resopt"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Plan, verify, and apply resource optimizations for Apple projects."
 license = "MIT"
 readme = "README.md"
+repository = "https://github.com/wenext-limited/resopt"
+documentation = "https://github.com/wenext-limited/resopt#readme"
 keywords = ["xcode", "xcassets", "png", "optimization", "cli"]
 categories = ["command-line-utilities", "multimedia::images"]
 
@@ -21,6 +23,13 @@ tempfile = "3"
 toml = "0.8"
 walkdir = "2"
 xcassets = "0.2"
+rayon = "1"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-core-foundation = "0.3.2"
+objc2-core-graphics = "0.3.2"
+objc2-image-io = "0.3.2"
 
 [dev-dependencies]
 crc32fast = "1"
