@@ -195,19 +195,25 @@ pub(crate) fn actual_format(bytes: &[u8]) -> Option<&'static str> {
         }
         let brands = &bytes[8..size.min(bytes.len())];
         if brands
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|b| matches!(b, b"avif" | b"avis"))
         {
             return Some("avif");
         }
         if brands
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|b| matches!(b, b"heic" | b"heix" | b"hevc" | b"hevx"))
         {
             return Some("heic");
         }
         if brands
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .any(|b| matches!(b, b"mif1" | b"msf1"))
         {
             return Some("heif");

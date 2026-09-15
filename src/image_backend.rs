@@ -45,7 +45,13 @@ pub(crate) fn compare(a: &Decoded, b: &Decoded) -> Result<ImageDifference> {
     let mut absolute = 0.0_f64;
     let mut squared = 0.0_f64;
     let mut alpha = 0.0_f32;
-    for (a, b) in a.pixels.chunks_exact(4).zip(b.pixels.chunks_exact(4)) {
+    for (a, b) in a
+        .pixels
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(b.pixels.as_chunks::<4>().0.iter())
+    {
         for channel in 0..3 {
             let delta = f64::from(a[channel] - b[channel]);
             absolute += delta.abs();
@@ -241,7 +247,9 @@ mod apple {
             "non_finite_decoded_samples"
         );
         let transparent_pixels = pixels
-            .chunks_exact(4)
+            .as_chunks::<4>()
+            .0
+            .iter()
             .filter(|pixel| pixel[3] < 1.0)
             .count();
         Ok(Decoded {
