@@ -12,12 +12,14 @@ mod filesystem;
 mod image_backend;
 mod optimizer;
 mod plan;
+mod report;
 mod resources;
 pub use analysis::{
     AnalysisOptions, AnalysisReport, ImageCandidate, ResourceAnalysis, analyze,
     analyze_with_progress,
 };
 pub use image_backend::{ImageDifference, ImageInfo, image_backend_available};
+pub use report::refresh_report;
 pub use resources::{Resource, ResourceInventory, inventory};
 
 pub use catalog::{Asset, Inventory, scan};

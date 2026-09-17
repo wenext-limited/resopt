@@ -187,7 +187,10 @@ pub fn analyze_with_progress(
         &out.join("analysis.json"),
         &serde_json::to_vec_pretty(&report)?,
     )?;
-    write_new(&out.join("report.html"), render_html(&report).as_bytes())?;
+    write_new(
+        &out.join("report.html"),
+        crate::report::render_html(&report)?.as_bytes(),
+    )?;
     Ok(report)
 }
 
@@ -337,121 +340,4 @@ fn analyze_resource(
         result.smallest_candidate = None;
     }
     result
-}
-
-fn escaped(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
-}
-
-fn render_html(report: &AnalysisReport) -> String {
-    use std::fmt::Write;
-    let mut html = String::from(
-        "<!doctype html><html lang=zh-CN><meta charset=utf-8><title>resopt 资源分析</title><style>body{font:15px system-ui;margin:32px;line-height:1.6;color:#222}table{border-collapse:collapse;width:100%}td,th{padding:8px;border-bottom:1px solid #ddd;text-align:left}img{max-width:256px;max-height:256px;background:repeating-conic-gradient(#ddd 0% 25%,#fff 0% 50%) 0/16px 16px}section{margin:24px 0;padding:16px;border:1px solid #ddd}code{word-break:break-all}.variants{display:flex;flex-wrap:wrap;gap:20px}figure{margin:0;max-width:280px}small{color:#666}</style><h1>resopt 资源分析</h1><p>此报告只生成候选，不修改项目。JPEG/HEIC 为有损编码；质量数值不是节省比例。体积最小不代表画质最佳。预览缩略图仅供初筛，正式选用前应检查原尺寸候选。MAE/PSNR 在统一 sRGB 预乘 Alpha 像素上计算，不是视觉验收。</p>",
-    );
-    let _ = write!(
-        html,
-        "<p>资源文件：{} · 有候选：{} · 按每个文件最小候选估算可节省 {} 字节（源文件体积）</p>",
-        report.resources.len(),
-        report
-            .status_counts
-            .get("candidates_available")
-            .unwrap_or(&0),
-        report.potential_source_bytes_saved
-    );
-    html.push_str("<p>不支持优化的音视频、动效、字体、压缩包等仍列入清单；不会解包或改写。详情见同目录 analysis.json。编译包体与构建目标归属未测量。</p>");
-    for resource in &report.resources {
-        let _ = write!(
-            html,
-            "<section><code>{}</code><p>{} · {} bytes · {}</p>",
-            escaped(&resource.resource.path.to_string_lossy()),
-            escaped(&resource.resource.format),
-            resource.resource.bytes,
-            escaped(&resource.status)
-        );
-        if let Some(info) = &resource.image {
-            let _ = write!(
-                html,
-                "<p>{}×{} · {} 帧 · 透明像素 {} · JPEG {}</p>",
-                info.width,
-                info.height,
-                info.frames,
-                info.transparent_pixels,
-                if info.has_transparent_pixels {
-                    "禁止"
-                } else {
-                    "可比较"
-                }
-            );
-        }
-        if !resource.issues.is_empty() {
-            let _ = write!(
-                html,
-                "<small>{}</small>",
-                escaped(&resource.issues.join("; "))
-            );
-        }
-        html.push_str("<div class=variants>");
-        if let (Some(preview), Some(artifact)) =
-            (&resource.original_preview, &resource.original_artifact)
-        {
-            let _ = write!(
-                html,
-                "<figure><a href=\"{}\"><img loading=lazy src=\"{}\"></a><figcaption>原图（缩略图，点击查看原文件）</figcaption></figure>",
-                escaped(&artifact.to_string_lossy()),
-                escaped(&preview.to_string_lossy())
-            );
-        }
-        for candidate in &resource.candidates {
-            if let (Some(preview), Some(artifact)) = (&candidate.preview, &candidate.artifact) {
-                let _ = write!(
-                    html,
-                    "<figure><a href=\"{}\"><img loading=lazy src=\"{}\"></a><figcaption>{} · 质量 {} · {} bytes<br>节省 {} bytes</figcaption></figure>",
-                    escaped(&artifact.to_string_lossy()),
-                    escaped(&preview.to_string_lossy()),
-                    escaped(&candidate.format),
-                    candidate.quality.map_or("无损".into(), |q| q.to_string()),
-                    candidate.bytes,
-                    candidate.savings_bytes
-                );
-            }
-        }
-        html.push_str("</div><table><tr><th>格式 / 质量</th><th>字节</th><th>RGB MAE</th><th>PSNR dB</th><th>Alpha 最大误差</th><th>结果</th></tr>");
-        for candidate in &resource.candidates {
-            let (mae, psnr) =
-                candidate
-                    .difference
-                    .as_ref()
-                    .map_or(("—".into(), "—".into()), |d| {
-                        (
-                            format!("{:.3}", d.rgb_mae_255),
-                            d.psnr_db.map_or("∞".into(), |p| format!("{p:.2}")),
-                        )
-                    });
-            let alpha = candidate
-                .difference
-                .as_ref()
-                .map_or("—".into(), |d| format!("{:.6}", d.max_alpha_error));
-            let _ = write!(
-                html,
-                "<tr><td>{} / {}</td><td>{}</td><td>{mae}</td><td>{psnr}</td><td>{alpha}</td><td>{}</td></tr>",
-                escaped(&candidate.format),
-                candidate.quality.map_or("无损".into(), |q| q.to_string()),
-                candidate.bytes,
-                escaped(candidate.rejection.as_deref().unwrap_or(
-                    if candidate.artifact.is_some() {
-                        "可审阅"
-                    } else {
-                        "无足够体积收益"
-                    }
-                ))
-            );
-        }
-        html.push_str("</table></section>");
-    }
-    html.push_str("</html>");
-    html
 }

@@ -104,6 +104,7 @@ HEIC 有损编码可能让 Alpha 相差一个 8 位量化级；默认上限为 `
 
 - `analysis.json`：全部资源、检测状态、问题、每个格式／质量的实际体积和误差。
 - `report.html`：可离线查看的中文报告，含原图与候选缩略图；点击可打开原尺寸文件。
+  报告支持搜索、原格式筛选、排序和分页，采用 KiB／MiB 自动单位，并可切换方案与透明背景。
 - `originals/`、`candidates/`、`previews/`：有体积收益的有效候选及对应原图和预览。
 
 较大、超出 Alpha 上限或编码失败的候选仍在 JSON／HTML 中记录原因，但不会被推荐为可采用结果。
@@ -113,6 +114,15 @@ HEIC 有损编码可能让 Alpha 相差一个 8 位量化级；默认上限为 `
 **分析不会修改项目。** 报告不是 `apply` 可执行的计划。
 JPEG／HEIC 的跨格式替换、`Contents.json` 更新、目录外文件引用改写和对应恢复事务尚未接入 `apply`。
 这避免在仅审阅候选时改动真实资源或破坏文件名引用。
+
+### 刷新已有报告界面
+
+```sh
+resopt report /tmp/resopt-analysis
+```
+
+读取同目录的 `analysis.json` 并更新 `report.html`，不重新编码，不改动测量数据或候选文件。
+HTML 内嵌交互所需的数据与脚本，无需网络或额外前端构建步骤。
 
 ### 分析边界
 
@@ -192,12 +202,14 @@ let lossless_plan = create_plan("/path/to/project", "/tmp/resopt-review", Policy
 ## 验证与体积口径
 
 ```sh
+node --test tests/report-ui.cjs
 cargo fmt --all --check
 cargo clippy --all-targets -- -D warnings
 cargo test --all-targets
 cargo test --doc
 ```
 
+报告脚本的语法、单位格式与资源 URL 检查使用 Node.js 内置测试工具（仅开发验证需要 Node.js）。
 macOS 图片编码测试需要能够访问系统 HEIC 编码器；不应在阻止编码服务的沙箱中运行。
 原有跨平台 PNG 测试继续保留；新增测试覆盖实际透明像素、透明 HEIC、已有 HEIC、错误扩展名、
 资源目录外文件、小图片、损坏图片、候选路由及报告生成。

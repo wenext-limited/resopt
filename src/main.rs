@@ -60,6 +60,8 @@ enum Commands {
         #[arg(long)]
         json: bool,
     },
+    /// Refresh report.html from saved analysis.json without re-encoding resources.
+    Report { directory: PathBuf },
     /// Stage verified PNG candidates and originals into a new plan directory.
     Plan {
         #[arg(default_value = ".")]
@@ -106,6 +108,14 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<()> {
     let mut stdout = io::stdout().lock();
     match cli.command {
+        Commands::Report { directory } => {
+            let path = resopt::refresh_report(directory)?;
+            writeln!(
+                stdout,
+                "Updated {} (measurements and resources unchanged)",
+                path.display()
+            )?;
+        }
         Commands::Doctor { json } => {
             let report = serde_json::json!({
                 "schema_version": 1,
