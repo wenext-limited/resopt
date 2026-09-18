@@ -461,3 +461,33 @@ fn appearance_rtl_and_scale_entries_survive_a_format_change_and_restore() {
     // Restoration is byte-exact, including the original formatting.
     assert_eq!(fs::read(dir.join("Contents.json")).unwrap(), contents);
 }
+
+#[test]
+fn a_crash_torn_backup_blob_is_repaired_instead_of_blocking_the_resource() {
+    let (root, out, review, original) = fixture("png", false);
+    review.apply(0, 0, false).unwrap();
+    review.restore(0).unwrap();
+    // Simulate a backup truncated by a crash during an earlier run.
+    let digest = hash(&original);
+    let blob = out
+        .path()
+        .join("operations/0")
+        .join(format!("{digest}.bin"));
+    fs::write(&blob, &original[..original.len() / 2]).unwrap();
+    review.apply(0, 0, false).unwrap();
+    assert_eq!(fs::read(&blob).unwrap(), original);
+    review.restore(0).unwrap();
+    assert_eq!(fs::read(root.path().join("picture.png")).unwrap(), original);
+}
+
+#[test]
+fn created_files_appear_complete_or_not_at_all() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("new.bin");
+    write_new(&path, b"complete").unwrap();
+    assert_eq!(fs::read(&path).unwrap(), b"complete");
+    // Never clobbers, and leaves no temporary sibling behind.
+    assert!(write_new(&path, b"other").is_err());
+    assert_eq!(fs::read(&path).unwrap(), b"complete");
+    assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
+}

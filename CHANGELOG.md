@@ -19,7 +19,8 @@
 - The default worker count follows the CPU count (up to 8); decoded pixels in flight are bounded so more workers do not multiply peak memory.
 - Report artifacts are no longer fsynced one by one (they are regenerable); on a 7,000-file project this alone reduced analysis from 86 s to 39 s.
 - Project locking uses an operating-system file lock. A crashed process can no longer leave a project or plan locked.
-- Every API route of the local server now requires the session token in addition to the Host check; state-changing routes also require the page's Origin. Artifacts are served only by generated name.
+- Local server hardening: the page is served only to the launch URL printed in the terminal (it carries a session key and sets an HttpOnly, SameSite=Strict cookie); artifacts and `analysis.json` require that cookie; every API route requires the session token, and state-changing routes also the page's Origin. Artifacts are served only by generated name.
+- Files are created atomically during apply and restore, so a crash cannot leave a partial file that blocks recovery.
 - Candidates that are not smaller are no longer scored, previewed or written.
 - `analysis.json` is schema 2 (additive). Reports from 0.5.x still open.
 

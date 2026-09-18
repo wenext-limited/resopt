@@ -52,9 +52,10 @@ pub fn web(root: impl AsRef<Path>, options: WebOptions) -> Result<()> {
         "analysis output must be a new directory"
     );
     let server = Server::http(("127.0.0.1", options.port)).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let origin = format!("http://{}", server.server_addr());
+    let token = server::session_token()?;
+    let url = server::launch_url(&server, &token);
     println!(
-        "Local web: {origin}/\nProject: {}\nReport: {}\nStop with Ctrl-C. Files stay on this device; reports and restore backups are retained.",
+        "Local web: {url}\nProject: {}\nReport: {}\nStop with Ctrl-C. Files stay on this device; reports and restore backups are retained.\nThe URL contains this session's key; the page is not served without it.",
         root.display(),
         out.display()
     );
@@ -105,9 +106,9 @@ pub fn web(root: impl AsRef<Path>, options: WebOptions) -> Result<()> {
         }
     });
     if !options.no_open {
-        open_browser(&origin);
+        open_browser(&url);
     }
-    server::run(Arc::new(server), app)
+    server::run(Arc::new(server), app, token)
 }
 fn open_browser(origin: &str) {
     #[cfg(target_os = "macos")]
@@ -132,6 +133,6 @@ fn open_browser(origin: &str) {
                 let _ = child.wait();
             });
         }
-        Err(error) => eprintln!("Could not open browser ({error}); open {origin}/ manually."),
+        Err(error) => eprintln!("Could not open browser ({error}); open {origin} manually."),
     }
 }

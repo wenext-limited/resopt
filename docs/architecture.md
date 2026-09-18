@@ -57,8 +57,13 @@ failures in `review::prepare`, which every apply path goes through.
 content-addressed before/after blobs are durable before the first project file
 changes. Each write re-checks that the file still holds the recorded before or
 after content, so restore works after a crash or restart and never overwrites a
-later edit. Project-wide mutual exclusion uses an operating-system file lock,
-which a crashed process cannot leave behind.
+later edit. Files are created atomically (temporary sibling, then a no-clobber
+link), so a crash never leaves a partial file that matches neither side; a
+backup blob damaged by an older crash is rewritten, and a journal that no longer
+loads is replaced only after `prepare` has proved the operation is not applied.
+Project-wide mutual exclusion uses an operating-system file lock, which a crashed
+process cannot leave behind (on Windows the empty lock file itself stays in
+place and is reused).
 
 **Reuse needs equal policy, not just equal bytes.** In-run duplicate sharing and
 the persistent cache key on source SHA-256, the resource's policy class (catalog,
@@ -69,15 +74,36 @@ read, and discarded on any mismatch.
 
 ## Local server security model
 
-`resopt web` and `resopt serve` bind `127.0.0.1` only. Every request must carry
-the exact `Host` the server is listening on (DNS rebinding). Every `/api/*`
-route requires the per-process session token embedded in the page. Every POST
-additionally requires the page's own `Origin` and a JSON content type, so other
-sites cannot drive the API. The server accepts no file uploads and no filesystem
-paths: resources are addressed by report index, artifacts only by generated
-names under `previews/`, `candidates/` and `originals/`. Responses carry a
-restrictive CSP, `nosniff`, `no-referrer` and `Cross-Origin-Resource-Policy:
-same-origin`.
+`resopt web` and `resopt serve` bind `127.0.0.1` only.
+
+- **Host** must equal the listening address on every request (DNS rebinding).
+- **The page is served only to the launch URL**, which carries a per-process
+  key (`/?k=…`, printed in the terminal and opened in the browser). The response
+  sets an `HttpOnly; SameSite=Strict` cookie and the script removes the key from
+  the address bar. A local process that only knows the port gets `403` for the
+  page, for `analysis.json` and for every artifact, so it can neither read
+  project data nor learn the session token.
+- **Every `/api/*` route** requires the session token header; **every POST**
+  also requires the page's own `Origin` and a JSON content type, so other sites
+  cannot drive the API even from the same browser.
+- The server accepts no uploads and no filesystem paths: resources are addressed
+  by report index, artifacts only by generated names under `previews/`,
+  `candidates/` and `originals/`.
+- Responses carry a restrictive CSP, `nosniff`, `no-referrer` and
+  `Cross-Origin-Resource-Policy: same-origin`.
+
+Out of scope: a process running as the same user that can read the terminal
+output or the browser's cookie store already has direct write access to the
+project.
+
+## Concurrency
+
+Image workers are plain threads pulling indexes from a shared queue. They are
+deliberately **not** a rayon pool: oxipng uses rayon internally, and a rayon
+worker waiting on nested work executes other queued tasks on the same stack.
+With a task already holding a pixel-budget lease or initializing a shared
+duplicate slot, that re-entrancy deadlocked (found in review, reproduced, and
+covered by `duplicates_under_a_tight_pixel_budget_never_deadlock`).
 
 ## Report compatibility
 

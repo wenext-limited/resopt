@@ -137,13 +137,19 @@ fn loopback_api_requires_session_and_origin_and_applies_only_selected_candidate(
     let mut ready_line = String::new();
     server.stdout.read_line(&mut ready_line).unwrap();
     assert!(ready_line.starts_with("Stop with Ctrl-C."), "{ready_line}");
-    let origin = line
-        .trim()
-        .strip_prefix("Review server: ")
-        .unwrap()
-        .trim_end_matches('/');
+    let origin = line.trim().strip_prefix("Review server: ").unwrap();
+    let (origin, key) = origin
+        .split_once("/?k=")
+        .expect("launch URL carries the session key");
+    let entry = format!("/?k={key}");
     let address = origin.strip_prefix("http://").unwrap();
-    let page = request(address, "GET", "/", "", "");
+    // Without the key (or the cookie it sets) neither the page nor data is served.
+    assert!(request(address, "GET", "/", "", "").starts_with("HTTP/1.1 403"));
+    assert!(request(address, "GET", "/?k=wrong", "", "").starts_with("HTTP/1.1 403"));
+    assert!(request(address, "GET", "/analysis.json", "", "").starts_with("HTTP/1.1 403"));
+    let page = request(address, "GET", &entry, "", "");
+    assert!(page.to_ascii_lowercase().contains("set-cookie: resopt_"));
+    assert!(page.contains("HttpOnly; SameSite=Strict"));
     assert!(page.starts_with("HTTP/1.1 200"));
     let data = page
         .split("id=\"report-data\">")
@@ -179,11 +185,22 @@ fn loopback_api_requires_session_and_origin_and_applies_only_selected_candidate(
         .starts_with("HTTP/1.1 403")
     );
     assert!(request(address, "GET", "/api/state", "", "").starts_with("HTTP/1.1 403"));
-    assert!(
-        request(address, "GET", "/operations/0/transaction.json", "", "")
-            .starts_with("HTTP/1.1 404")
+    let cookie = format!(
+        "Cookie: resopt_{}={token}\r\n",
+        address.rsplit(':').next().unwrap()
     );
-    assert!(request(address, "GET", "/../Cargo.toml", "", "").starts_with("HTTP/1.1 404"));
+    assert!(
+        request(
+            address,
+            "GET",
+            "/operations/0/transaction.json",
+            &cookie,
+            ""
+        )
+        .starts_with("HTTP/1.1 404")
+    );
+    assert!(request(address, "GET", "/../Cargo.toml", &cookie, "").starts_with("HTTP/1.1 404"));
+    assert!(request(address, "GET", "/analysis.json", &cookie, "").starts_with("HTTP/1.1 200"));
     assert_eq!(fs::read(asset.join("image.png")).unwrap(), original);
     assert!(
         request(
@@ -254,16 +271,15 @@ fn web_analyzes_local_project_without_uploads_and_serves_review() {
     );
     let mut line = String::new();
     server.stdout.read_line(&mut line).unwrap();
-    let origin = line
-        .trim()
-        .strip_prefix("Local web: ")
-        .unwrap()
-        .trim_end_matches('/')
-        .to_string();
+    let origin = line.trim().strip_prefix("Local web: ").unwrap().to_string();
+    let (origin, key) = origin
+        .split_once("/?k=")
+        .expect("launch URL carries the session key");
+    let (origin, entry) = (origin.to_string(), format!("/?k={key}"));
     let address = origin.strip_prefix("http://").unwrap();
     assert!(address.starts_with("127.0.0.1:"));
     // The shell page carries the session token and no project data.
-    let page = request(address, "GET", "/", "", "");
+    let page = request(address, "GET", &entry, "", "");
     assert!(page.starts_with("HTTP/1.1 200"), "{page}");
     let data = page
         .split("id=\"report-data\">")
@@ -285,7 +301,7 @@ fn web_analyzes_local_project_without_uploads_and_serves_review() {
     // state changes the page's own Origin.
     assert!(request(address, "GET", "/api/results", "", "").starts_with("HTTP/1.1 403"));
     assert!(request(address, "GET", "/api/capabilities", "", "").starts_with("HTTP/1.1 403"));
-    let rebinding = request_with_host("attacker.example", address, "GET", "/", "", "");
+    let rebinding = request_with_host("attacker.example", address, "GET", &entry, "", "");
     assert!(rebinding.starts_with("HTTP/1.1 403"), "{rebinding}");
     let cross_site = post.replace(&origin, "https://attacker.example");
     for route in ["/api/cancel", "/api/batch/apply", "/api/restore-all"] {
@@ -350,11 +366,28 @@ fn web_analyzes_local_project_without_uploads_and_serves_review() {
         request(address, "PUT", "/previews/0-original.png", &session, "x")
             .starts_with("HTTP/1.1 405")
     );
-    assert!(request(address, "GET", "/../project/image.png", "", "").starts_with("HTTP/1.1 404"));
+    let cookie = format!(
+        "Cookie: other=1; resopt_{}={token}\r\n",
+        address.rsplit(':').next().unwrap()
+    );
+    assert!(
+        request(address, "GET", "/../project/image.png", &cookie, "").starts_with("HTTP/1.1 404")
+    );
     let artifact = candidates.iter().find(|c| c["format"] == "png").unwrap()["artifact"]
         .as_str()
         .unwrap();
-    assert!(request(address, "GET", &format!("/{artifact}"), "", "").starts_with("HTTP/1.1 200"));
+    // Artifacts need the session cookie: knowing the port is not enough.
+    assert!(request(address, "GET", &format!("/{artifact}"), "", "").starts_with("HTTP/1.1 403"));
+    let stolen = format!(
+        "Cookie: resopt_{}=guess\r\n",
+        address.rsplit(':').next().unwrap()
+    );
+    assert!(
+        request(address, "GET", &format!("/{artifact}"), &stolen, "").starts_with("HTTP/1.1 403")
+    );
+    assert!(
+        request(address, "GET", &format!("/{artifact}"), &cookie, "").starts_with("HTTP/1.1 200")
+    );
 
     // Batch: preview with the default lossless policy, confirm, then restore all.
     let policy = r#"{"policy":{}}"#;
@@ -461,14 +494,13 @@ fn analysis_can_be_cancelled_and_still_yields_a_consistent_reviewable_report() {
     );
     let mut line = String::new();
     server.stdout.read_line(&mut line).unwrap();
-    let origin = line
-        .trim()
-        .strip_prefix("Local web: ")
-        .unwrap()
-        .trim_end_matches('/')
-        .to_string();
+    let origin = line.trim().strip_prefix("Local web: ").unwrap().to_string();
+    let (origin, key) = origin
+        .split_once("/?k=")
+        .expect("launch URL carries the session key");
+    let (origin, entry) = (origin.to_string(), format!("/?k={key}"));
     let address = origin.strip_prefix("http://").unwrap();
-    let page = request(address, "GET", "/", "", "");
+    let page = request(address, "GET", &entry, "", "");
     let token = page
         .split("\"sessionToken\":\"")
         .nth(1)

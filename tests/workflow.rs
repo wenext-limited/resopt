@@ -125,7 +125,9 @@ fn plan_apply_repeat_and_restore_preserve_pixels_and_catalog() {
     assert_eq!(restore(&directory).unwrap().already_current, 1);
     let journal = fs::read_to_string(directory.join("journal.jsonl")).unwrap();
     assert_eq!(journal.lines().count(), 4);
-    assert!(!directory.join(".lock").exists());
+    // Lock files are removed after use except on Windows, where an unheld
+    // lock file is left in place and reused.
+    assert_eq!(directory.join(".lock").exists(), cfg!(windows));
 }
 
 #[test]
@@ -494,13 +496,13 @@ fn separate_plans_respect_project_lock() {
         .unwrap();
     held.lock().unwrap();
     assert!(apply(&directory).is_err());
-    assert!(!directory.join(".lock").exists());
+    assert_eq!(directory.join(".lock").exists(), cfg!(windows));
     assert!(root.path().join(".resopt.lock").exists());
     // Once that process exits (or crashes) the leftover file no longer blocks work.
     drop(held);
     assert!(root.path().join(".resopt.lock").exists());
     apply(&directory).unwrap();
-    assert!(!root.path().join(".resopt.lock").exists());
+    assert_eq!(root.path().join(".resopt.lock").exists(), cfg!(windows));
 }
 
 #[cfg(unix)]

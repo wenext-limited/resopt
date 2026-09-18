@@ -268,3 +268,62 @@ fn report_batch_applies_lossless_by_default_reports_conflicts_and_restores_all()
         b"edited after apply"
     );
 }
+
+/// Regression: nested rayon work inside oxipng used to re-enter the analyzer on
+/// the same stack while a pixel lease or a duplicate slot was held, which hung
+/// analysis forever. Duplicates, a tight pixel budget and a high PNG effort
+/// made that likely; the run must now always finish.
+#[test]
+fn duplicates_under_a_tight_pixel_budget_never_deadlock() {
+    fn large(seed: u8, side: u32) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let mut encoder = png::Encoder::new(&mut bytes, side, side);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_compression(png::Compression::Fast);
+        let data: Vec<u8> = (0..side * side)
+            .flat_map(|p| [(p % 251) as u8, (p / side) as u8, seed, 255])
+            .collect();
+        encoder
+            .write_header()
+            .unwrap()
+            .write_image_data(&data)
+            .unwrap();
+        bytes
+    }
+    let base = tempfile::tempdir().unwrap();
+    let project = base.path().join("project");
+    for group in 0..6_u8 {
+        let bytes = large(group, if group < 2 { 640 } else { 96 });
+        for copy in 0..4 {
+            write(&project, &format!("g{group}/copy-{copy}.png"), &bytes);
+        }
+    }
+    let (sender, receiver) = std::sync::mpsc::channel();
+    for round in 0..3 {
+        let (project, out, sender) = (
+            project.clone(),
+            base.path().join(format!("report-{round}")),
+            sender.clone(),
+        );
+        std::thread::spawn(move || {
+            let report = analyze(
+                &project,
+                out,
+                AnalysisOptions {
+                    qualities: vec![85],
+                    jobs: 4,
+                    png_level: 5,
+                    max_pixels: 640 * 640,
+                    ..Default::default()
+                },
+            );
+            let _ = sender.send(report.map(|r| r.resources.len()).map_err(|e| e.to_string()));
+        });
+    }
+    for _ in 0..3 {
+        let finished = receiver
+            .recv_timeout(std::time::Duration::from_secs(240))
+            .expect("analysis deadlocked");
+        assert_eq!(finished, Ok(24));
+    }
+}

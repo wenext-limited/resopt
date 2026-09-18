@@ -8,7 +8,6 @@ use crate::{
     timings::{Phase, Timings},
 };
 use anyhow::{Context, Result, ensure};
-use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::{
     collections::{BTreeMap, HashMap},
@@ -387,9 +386,6 @@ pub(crate) fn analyze_with_observer(
         .android_min_sdk
         .or(inventory.android_min_sdk.as_ref().map(|sdk| sdk.level));
     let workers = options.worker_count();
-    let pool = rayon::ThreadPoolBuilder::new()
-        .num_threads(workers)
-        .build()?;
     let budget = PixelBudget::new(options.max_pixels);
     let context = ImageContext {
         root: &inventory.root,
@@ -520,12 +516,26 @@ pub(crate) fn analyze_with_observer(
         reused.resource = resource.clone();
         reused
     };
-    indexed.extend(pool.install(|| {
-        work.par_iter()
-            .with_max_len(1)
-            .map(|&index| finish(index, analyze_one(index)))
-            .collect::<Vec<_>>()
-    }));
+    // Plain threads pulling from a shared queue, not a rayon pool: oxipng uses
+    // rayon internally, and a rayon worker that waits on nested work runs other
+    // queued tasks on the same stack. With a task already holding a pixel lease
+    // or initializing a shared duplicate slot, that re-entrancy deadlocked.
+    let next = AtomicUsize::new(0);
+    let finished = Mutex::new(Vec::with_capacity(work.len()));
+    std::thread::scope(|scope| {
+        for _ in 0..workers.min(work.len()).max(1) {
+            scope.spawn(|| {
+                while let Some(&index) = work.get(next.fetch_add(1, Ordering::Relaxed)) {
+                    let done = finish(index, analyze_one(index));
+                    finished
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .push(done);
+                }
+            });
+        }
+    });
+    indexed.extend(finished.into_inner().unwrap_or_else(|e| e.into_inner()));
     indexed.sort_by_key(|(index, _)| *index);
     let resources: Vec<_> = indexed.into_iter().map(|(_, result)| result).collect();
     let mut status_counts = BTreeMap::new();

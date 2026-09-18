@@ -58,8 +58,8 @@ struct Optimized {
 }
 
 /// The smallest verified-safe encoding found, or the original bytes.
-// Entry point for callers outside analysis; remove the allow once one exists.
-#[allow(dead_code)]
+/// One-shot optimization without cancellation; analysis uses `optimize_with`.
+#[cfg(test)]
 pub(crate) fn optimize(original: &[u8], png: &Policy) -> Result<Vec<u8>> {
     Ok(optimize_with(original, png, &|| false)?.bytes)
 }

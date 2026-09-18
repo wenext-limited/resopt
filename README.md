@@ -45,9 +45,9 @@ The package is named **resopt-cli**; the command is **resopt**. Building from so
 resopt web /path/to/project
 ```
 
-resopt opens your browser on a page served from `127.0.0.1` only. Results stream in as files finish. When analysis completes you can compare candidates, apply a change, restore it, or batch-apply under a policy you choose.
+resopt opens your browser on a page served from `127.0.0.1` only. The printed URL contains a session key; the page and its data are not served without it. Results stream in as files finish. When analysis completes you can compare candidates, apply a change, restore it, or batch-apply under a policy you choose.
 
-The terminal prints the report directory. It holds the report and the restore backups — keep it for as long as you may want to undo changes. To reopen it later:
+The terminal prints the report directory. It holds the report and the restore backups — keep it for as long as you may want to undo changes. To reopen it later (open the URL it prints):
 
 ```sh
 resopt serve /path/to/report

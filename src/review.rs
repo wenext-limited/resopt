@@ -632,10 +632,16 @@ impl Review {
         }
         let directory = self.operation(index)?;
         if fs::symlink_metadata(directory.join("transaction.json")).is_ok() {
-            ensure!(
-                self.state(&self.load(index)?)? == "original",
-                "restore the previous operation first"
-            );
+            // `prepare` just proved the source still has its analyzed content
+            // and the target does not exist, so an earlier operation cannot be
+            // applied or half-applied. A journal that no longer loads (damaged
+            // by a crash) therefore describes nothing and is rewritten below.
+            if let Ok(previous) = self.load(index) {
+                ensure!(
+                    self.state(&previous)? == "original",
+                    "restore the previous operation first"
+                );
+            }
         }
         safe_directory(&self.directory, Path::new("operations"))?;
         safe_directory(
@@ -667,7 +673,10 @@ impl Review {
                     let path = directory.join(format!("{digest}.bin"));
                     if fs::symlink_metadata(&path).is_ok() {
                         let file = contained_file(&directory, Path::new(&format!("{digest}.bin")))?;
-                        read_verified(&file, &digest)?;
+                        // A backup damaged by an earlier crash is rewritten, not trusted.
+                        if read_verified(&file, &digest).is_err() {
+                            replace(&file, &bytes)?;
+                        }
                     } else {
                         write_new(&path, &bytes)?;
                     }

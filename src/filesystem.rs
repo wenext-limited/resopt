@@ -53,13 +53,15 @@ pub(crate) fn replace(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Create a file that must not exist yet, atomically: the content is written
+/// to a temporary sibling and linked into place only when complete, so a crash
+/// never leaves a partial file that matches neither side of a transaction.
 pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
-    let mut file = fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
+    let parent = path.parent().context("file has no parent")?;
+    let mut temp = tempfile::NamedTempFile::new_in(parent)?;
+    temp.write_all(bytes)?;
+    temp.as_file().sync_all()?;
+    temp.persist_noclobber(path).map_err(|e| e.error)?;
     Ok(())
 }
 
@@ -112,8 +114,7 @@ impl ProjectLock {
             // A previous holder may have unlinked this path between our open and
             // lock; only a lock on the file currently at `path` counts.
             // Windows denies reads through a second handle while the lock is
-            // held, and keeps an unlinked name reserved until every handle is
-            // closed, so the re-check is both impossible and unnecessary there.
+            // held; it never unlinks the lock file instead (see `Drop`).
             if cfg!(windows) || fs::read(&path).is_ok_and(|current| current == token.as_bytes()) {
                 return Ok(Self { file, path });
             }
@@ -124,8 +125,14 @@ impl ProjectLock {
 
 impl Drop for ProjectLock {
     fn drop(&mut self) {
-        // Remove while still holding the lock, then release it.
-        let _ = fs::remove_file(&self.path);
+        // Remove while still holding the lock, then release it. `acquire`
+        // re-checks that it locked the file currently at the path, which makes
+        // this safe. Windows cannot do that re-check (a second handle cannot
+        // read a locked file), so there the file is simply left in place: an
+        // unheld lock file is harmless and is reused by the next operation.
+        if !cfg!(windows) {
+            let _ = fs::remove_file(&self.path);
+        }
         let _ = self.file.unlock();
     }
 }
@@ -144,7 +151,7 @@ mod tests {
         let error = ProjectLock::acquire(path.clone(), "busy").err().unwrap();
         assert_eq!(error.to_string(), "busy");
         drop(first);
-        assert!(!path.exists());
+        assert_eq!(path.exists(), cfg!(windows));
         drop(ProjectLock::acquire(path.clone(), "busy").unwrap());
     }
 

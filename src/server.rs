@@ -4,6 +4,11 @@
 //! from HTTP clients, and checks the Host header on every request (DNS
 //! rebinding), a per-process session token on every API route, and the Origin
 //! header on every state-changing request (cross-site requests).
+//!
+//! The page itself is served only to the launch URL, which carries a one-time
+//! key; it then sets an HttpOnly, SameSite=Strict cookie that report artifacts
+//! require. Another local process that merely knows the port can therefore
+//! neither obtain the session token nor read project data.
 use crate::{
     AnalysisControl, ResourceAnalysis,
     batch::{self, BatchPlan, BatchPolicy, BatchStatus},
@@ -154,13 +159,14 @@ pub fn serve(directory: impl AsRef<Path>, port: u16) -> Result<()> {
         review.report.root.clone(),
     ));
     app.finish(review);
+    let token = session_token()?;
     println!(
-        "Review server: http://{}/\nProject: {}\nStop with Ctrl-C. Sources change only after an explicit Apply request.",
-        server.server_addr(),
+        "Review server: {}\nProject: {}\nStop with Ctrl-C. Sources change only after an explicit Apply request.",
+        launch_url(&server, &token),
         app.project.display()
     );
     std::io::stdout().flush()?;
-    run(Arc::new(server), app)
+    run(Arc::new(server), app, token)
 }
 
 pub(crate) fn session_token() -> Result<String> {
@@ -169,12 +175,17 @@ pub(crate) fn session_token() -> Result<String> {
     Ok(random.iter().map(|b| format!("{b:02x}")).collect())
 }
 
+/// The only URL that serves the page: it carries the session key.
+pub(crate) fn launch_url(server: &Server, token: &str) -> String {
+    format!("http://{}/?k={token}", server.server_addr())
+}
+
 /// Handle requests until the process exits.
-pub(crate) fn run(server: Arc<Server>, app: Arc<App>) -> Result<()> {
-    let token = session_token()?;
+pub(crate) fn run(server: Arc<Server>, app: Arc<App>, token: String) -> Result<()> {
     let address = server.server_addr().to_string();
     let page = crate::report::render_live_page(&app.project, &token)?;
     let session = Arc::new(Session {
+        cookie: format!("resopt_{}", address.rsplit(':').next().unwrap_or_default()),
         origin: format!("http://{address}"),
         address,
         token,
@@ -197,6 +208,8 @@ pub(crate) fn run(server: Arc<Server>, app: Arc<App>) -> Result<()> {
 }
 
 struct Session {
+    /// Cookie names are not port-scoped, so each server uses its own.
+    cookie: String,
     address: String,
     origin: String,
     token: String,
@@ -228,18 +241,48 @@ fn handle(mut request: Request, app: &Arc<App>, session: &Session) {
             "method not allowed; this server accepts no uploads",
         );
     }
+    let has_cookie = header(&request, "Cookie").is_some_and(|cookies| {
+        cookies
+            .split(';')
+            .filter_map(|pair| pair.trim().split_once('='))
+            .any(|(name, value)| name == session.cookie && value == session.token)
+    });
     if get && matches!(route, "/" | "/report.html") {
-        return respond(
+        let has_key = query
+            .split('&')
+            .any(|pair| pair.strip_prefix("k=") == Some(session.token.as_str()));
+        if !has_key && !has_cookie {
+            return respond(
+                request,
+                403,
+                "text/plain; charset=utf-8",
+                b"Open the full URL that resopt printed in your terminal (it contains the session key).".to_vec(),
+            );
+        }
+        let cookie = format!(
+            "{}={}; HttpOnly; SameSite=Strict; Path=/",
+            session.cookie, session.token
+        );
+        return respond_with(
             request,
             200,
             "text/html; charset=utf-8",
             session.page.as_bytes().to_vec(),
+            &[("Set-Cookie", cookie.as_str())],
         );
     }
     if get && route == "/favicon.ico" {
         return respond(request, 204, "image/x-icon", vec![]);
     }
     if get && !route.starts_with("/api/") {
+        // Images cannot send custom headers; the session cookie authorizes them.
+        if !has_cookie && header(&request, "X-Resopt-Token") != Some(session.token.as_str()) {
+            return error(
+                request,
+                403,
+                "invalid session; open the URL printed by resopt",
+            );
+        }
         return serve_artifact(request, app, route);
     }
     if !route.starts_with("/api/") {
@@ -481,6 +524,10 @@ pub(crate) fn header<'a>(request: &'a Request, name: &str) -> Option<&'a str> {
 }
 
 pub(crate) fn respond(request: Request, code: u16, media: &str, bytes: Vec<u8>) {
+    respond_with(request, code, media, bytes, &[]);
+}
+
+fn respond_with(request: Request, code: u16, media: &str, bytes: Vec<u8>, extra: &[(&str, &str)]) {
     let mut response = Response::from_data(bytes).with_status_code(StatusCode(code));
     for (key, value) in [
         ("Content-Type", media),
@@ -492,8 +539,13 @@ pub(crate) fn respond(request: Request, code: u16, media: &str, bytes: Vec<u8>) 
             "Content-Security-Policy",
             "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
         ),
-    ] {
-        response.add_header(Header::from_bytes(key, value).expect("static valid header"));
+    ]
+    .into_iter()
+    .chain(extra.iter().copied())
+    {
+        if let Ok(header) = Header::from_bytes(key, value) {
+            response.add_header(header);
+        }
     }
     let _ = request.respond(response);
 }

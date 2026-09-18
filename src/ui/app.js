@@ -255,6 +255,8 @@ function start() {
   $('previous').addEventListener('click', () => changePage(-1)); $('next').addEventListener('click', () => changePage(1));
   document.addEventListener('keydown', event => { if (event.key === '/' && !/INPUT|SELECT|TEXTAREA/.test(document.activeElement?.tagName || '')) { event.preventDefault(); $('search').focus(); } });
   setupDialogs();
+  // The launch key has done its job once the page is loaded; keep it out of the address bar and history.
+  if (location.search) history.replaceState(null, '', location.pathname);
   if (state.token) {
     api('/api/capabilities').then(c => { state.capabilities = c; renderStatus(); }).catch(() => {});
     poll();

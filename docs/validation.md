@@ -24,7 +24,8 @@ Failure paths covered by tests, not only successful conversions:
 - **Batch**: invalid policies are refused before any write; a stale preview token is refused; a conflicting file fails alone while the rest apply; applied files are skipped by the next batch; asset renames are excluded.
 - **Cancellation and concurrency**: cancelling analysis yields a consistent, reviewable report; changes are refused while analysis runs; the pixel budget serializes oversized work without deadlock.
 - **Cache**: content and option changes miss; corrupted, truncated, interrupted and foreign entries are discarded and recomputed; pruning removes the oldest entries.
-- **Server**: Host, session token and Origin enforced per route; no upload route; only generated artifact names are served.
+- **Server**: Host, session token and Origin enforced per route; the page, `analysis.json` and artifacts are refused without the launch key or its cookie; no upload route; only generated artifact names are served.
+- **Independent review**: an adversarial review of the branch reproduced an analysis deadlock (nested rayon work under a held lease; 9 of 12 runs hung in its reproduction, 0 of 24 after the fix) and reported three medium issues (token readable by local non-browser clients, non-atomic creates blocking crash recovery, a Windows lock-file race). All four are fixed with regression tests; the reviewed clean areas are listed in the release notes.
 
 ## Real-browser verification
 
