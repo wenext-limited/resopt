@@ -60,6 +60,7 @@ const MESSAGES = {
     issue_android_min_sdk_unknown: 'minSdk could not be read from Gradle files; pass --android-min-sdk to enable WebP candidates', issue_app_icon: 'App icon: kept as is', issue_resizing: 'Resizable (sliced) image: kept as is',
     issue_multiple_frames_not_transcoded: 'Animated image: inspected only, never flattened', issue_below_explicit_input_threshold: 'Below the configured input size', issue_source_changed_during_analysis: 'The file changed while it was being analyzed; run the analysis again',
     issue_decoded_image_exceeds_max_pixels: 'Larger than the pixel limit (raise it with --max-pixels)', issue_dimensions_changed: 'Dimensions changed', issue_orientation_changed: 'Orientation changed', issue_no_smaller_candidate: 'No smaller candidate was produced', issue_failed_verification: 'This candidate failed verification and cannot be applied',
+    issue_ffprobe_not_installed: 'Install ffmpeg to see codec, duration and bitrate for this file', mediaInfo: '{0} · {1} s · {2} kbit/s',
     issue_backend: 'Listed in the inventory; resopt has no optimizer for this type yet', issue_macos: 'Decoding this format needs Apple ImageIO (macOS)', issue_min_sdk: 'WebP here needs API {1}+, but minSdk is {0}', issue_metadata: 'Not carried into the new file: {0}',
   },
   'zh-CN': {
@@ -121,6 +122,7 @@ const MESSAGES = {
     issue_android_min_sdk_unknown: '无法从 Gradle 文件读取 minSdk；使用 --android-min-sdk 指定后可生成 WebP 候选', issue_app_icon: 'AppIcon：保持原样', issue_resizing: '拉伸（切片）图片：保持原样',
     issue_multiple_frames_not_transcoded: '动图：仅检测，不会压成单帧', issue_below_explicit_input_threshold: '低于指定的输入体积', issue_source_changed_during_analysis: '分析期间文件发生变化，请重新分析',
     issue_decoded_image_exceeds_max_pixels: '超过像素上限（可用 --max-pixels 调整）', issue_dimensions_changed: '尺寸改变', issue_orientation_changed: '方向改变', issue_no_smaller_candidate: '没有生成更小的候选', issue_failed_verification: '该候选未通过校验，无法应用',
+    issue_ffprobe_not_installed: '安装 ffmpeg 后可查看此文件的编码、时长与码率', mediaInfo: '{0} · {1} 秒 · {2} kbit/s',
     issue_backend: '已纳入清单；resopt 暂无此类型的优化器', issue_macos: '解码此格式需要 Apple ImageIO（macOS）', issue_min_sdk: '此处使用 WebP 需要 API {1}+，但 minSdk 为 {0}', issue_metadata: '不会带入新文件：{0}',
   },
 };

@@ -87,7 +87,7 @@ pub fn detect() -> Vec<Tool> {
         simple(
             "ffprobe",
             "-version",
-            "Reports codec, bitrate and duration for audio and video resources.",
+            "Reports codec, duration and bitrate for audio and video resources (inspection only; resopt does not transcode media).",
             install_hint(
                 "brew install ffmpeg",
                 "Install ffmpeg with your package manager, e.g. `sudo apt install ffmpeg`.",

@@ -11,6 +11,10 @@ mod aapt;
 #[cfg(feature = "native")]
 mod analysis;
 #[cfg(feature = "native")]
+mod media;
+#[cfg(feature = "native")]
+pub use media::MediaInfo;
+#[cfg(feature = "native")]
 mod package_diff;
 #[cfg(feature = "native")]
 pub use package_diff::{EntryChange, PackageDiff, package_diff};

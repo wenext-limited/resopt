@@ -201,6 +201,9 @@ pub struct ResourceAnalysis {
     pub smallest_candidate: Option<usize>,
     pub original_preview: Option<PathBuf>,
     pub original_artifact: Option<PathBuf>,
+    /// Codec, duration and bitrate of audio/video files, when ffprobe is installed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub media: Option<crate::media::MediaInfo>,
     /// Scale-invariant fingerprint used to find duplicate and resized images.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fingerprint: Option<crate::similarity::Fingerprint>,
@@ -219,6 +222,7 @@ impl ResourceAnalysis {
             original_preview: None,
             original_artifact: None,
             fingerprint: None,
+            media: None,
         }
     }
 
@@ -416,7 +420,9 @@ pub(crate) fn analyze_with_observer(
     // of the savings.
     let (mut work, settled): (Vec<usize>, Vec<usize>) = (0..total).partition(|&index| {
         let resource = &inventory.assets[index];
-        resource.support == "optimizable" || (resource.kind == "image" && options.probe_only)
+        resource.support == "optimizable"
+            || (resource.kind == "image" && options.probe_only)
+            || (is_media(resource) && crate::media::ffprobe_available())
     });
     work.sort_by_key(|&index| std::cmp::Reverse(inventory.assets[index].bytes));
     let mut indexed: Vec<(usize, ResourceAnalysis)> = settled
@@ -428,6 +434,15 @@ pub(crate) fn analyze_with_observer(
         let resource = &inventory.assets[index];
         if control.is_cancelled() {
             return ResourceAnalysis::new(resource, "not_analyzed");
+        }
+        if is_media(resource) {
+            // Inspection only: spawning ffprobe runs on the worker pool so it
+            // never delays image results.
+            let mut row = settled_row(resource);
+            if let Ok(path) = contained_file(&inventory.root, &resource.path) {
+                row.media = timings.time(Phase::Decode, || crate::media::probe(&path));
+            }
+            return row;
         }
         let read = timings.time(Phase::Hash, || {
             contained_file(&inventory.root, &resource.path)
@@ -563,6 +578,10 @@ pub(crate) fn analyze_with_observer(
     Ok(report)
 }
 
+fn is_media(resource: &Resource) -> bool {
+    matches!(resource.kind.as_str(), "audio" | "video") && resource.conversion_exclusion.is_none()
+}
+
 /// Inventory rows that need no decoding.
 fn settled_row(resource: &Resource) -> ResourceAnalysis {
     if let Some(reason) = &resource.conversion_exclusion {
@@ -571,6 +590,9 @@ fn settled_row(resource: &Resource) -> ResourceAnalysis {
         return row;
     }
     let mut row = ResourceAnalysis::new(resource, "unsupported");
+    if is_media(resource) && !crate::media::ffprobe_available() {
+        row.issues.push("ffprobe_not_installed".into());
+    }
     row.issues.push(if resource.kind == "image" {
         format!("{}_decoding_requires_macos_imageio", resource.format)
     } else {

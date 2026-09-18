@@ -405,6 +405,7 @@ mod tests {
             original_preview: Some(format!("previews/{index}-original.png").into()),
             original_artifact: Some(format!("originals/{index}.png").into()),
             fingerprint: None,
+            media: None,
         }
     }
 

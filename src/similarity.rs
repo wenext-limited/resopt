@@ -63,7 +63,7 @@ fn downscale(image: &Decoded, sample: impl Fn(&[f32]) -> f32) -> Vec<f32> {
     for y in 0..height {
         let gy = y * GRID / height;
         let row = &image.pixels[y * width * 4..(y + 1) * width * 4];
-        for (x, pixel) in row.chunks_exact(4).enumerate() {
+        for (x, pixel) in row.as_chunks::<4>().0.iter().enumerate() {
             let cell = gy * GRID + x * GRID / width;
             sums[cell] += sample(pixel);
             counts[cell] += 1;
@@ -129,7 +129,7 @@ pub(crate) fn fingerprint(image: &Decoded) -> Option<Fingerprint> {
     let opaque = alpha.iter().all(|a| *a >= 0.999);
     let mut color = [0.0_f64; 3];
     let mut coverage = 0.0_f64;
-    for pixel in image.pixels.chunks_exact(4) {
+    for pixel in image.pixels.as_chunks::<4>().0 {
         for (total, value) in color.iter_mut().zip(pixel) {
             *total += f64::from(*value);
         }

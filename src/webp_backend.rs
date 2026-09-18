@@ -153,8 +153,10 @@ pub(crate) fn verify_lossless(png: &[u8], candidate: &[u8], max_pixels: usize) -
     } else {
         image.len() == expected.len() / 4 * 3
             && expected
-                .chunks_exact(4)
-                .zip(image.chunks_exact(3))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .zip(image.as_chunks::<3>().0.iter())
                 .all(|(a, b)| a[3] == 255 && a[..3] == *b)
     };
     ensure!(same, "lossless_webp_pixels_changed");

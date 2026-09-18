@@ -38,6 +38,7 @@ function renderDetail() {
     facts.append(el('span', '', `${count(r.image.width)} × ${count(r.image.height)}`), el('span', '', t(r.image.has_transparent_pixels ? 'transparent' : 'opaque')));
     if (r.image.frames > 1) facts.append(el('span', '', t('frames', r.image.frames)));
   }
+  if (r.media) facts.append(el('span', '', t('mediaInfo', r.media.streams.join(' + '), r.media.duration_seconds?.toFixed(1) ?? '—', r.media.bit_rate ? Math.round(r.media.bit_rate / 1000) : '—')));
   if (r.resource?.extension_mismatch) facts.append(el('span', 'status-warn', t('mismatch')));
   pane.append(facts);
   const android = r.resource?.android;
