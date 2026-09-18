@@ -138,6 +138,7 @@ async function previewApply(r, c, index) {
     if (kind) lines.push(t('warnRecorded'));
     if (plan.android?.usage) { const a = plan.android; lines.push(t('dialogAndroid', a.resource_name, a.resource_type, a.min_sdk ?? '?', a.usage.xml_references, a.usage.code_references)); if (a.usage.dynamic_lookup_files) lines.push(t('dialogDynamic', a.usage.dynamic_lookup_files)); }
     else lines.push(references.length ? `${t('dialogRefs', references.length)}\n${references.join('\n')}` : t('dialogNoRefs'));
+    if (plan.android?.aapt2) lines.push(t('dialogCompiled', size(plan.android.aapt2.original_compiled_bytes), size(plan.android.aapt2.candidate_compiled_bytes)));
     for (const note of plan.notes || []) lines.push(issueText(locale, note));
     showConfirm(t(kind ? 'confirmWarning' : c.lossy ? 'confirmLossy' : 'confirmLossless'), lines.join('\n'), t(plan.loose_conversion ? 'dialogLoose' : 'dialogBackup'), t(kind ? 'confirmAccept' : 'confirmApply'), !!kind);
     state.message = '';

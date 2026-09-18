@@ -63,6 +63,19 @@ pub(crate) fn write_new(path: &Path, bytes: &[u8]) -> Result<()> {
     Ok(())
 }
 
+/// Create a regenerable report artifact. Unlike `write_new` this does not force
+/// the data to disk: an interrupted analysis is discarded as a whole, and on
+/// macOS a per-file fsync dominated analysis time (hundreds of seconds summed
+/// over a few thousand previews).
+pub(crate) fn write_artifact(path: &Path, bytes: &[u8]) -> Result<()> {
+    fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)?
+        .write_all(bytes)?;
+    Ok(())
+}
+
 /// Exclusive, crash-safe lock. The operating system releases it when the
 /// process exits, so an interrupted run never leaves a project locked; a
 /// leftover lock file without a holder is simply reused.

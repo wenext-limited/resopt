@@ -218,7 +218,7 @@ impl Cache {
         let mut written = Vec::with_capacity(staged.len());
         for (relative, bytes) in staged {
             let path = out.join(relative);
-            if let Err(error) = write_new(&path, &bytes) {
+            if let Err(error) = crate::filesystem::write_artifact(&path, &bytes) {
                 // Leave no partial copy behind: the caller re-analyzes into the
                 // same file names.
                 for path in written {

@@ -33,3 +33,4 @@ dialog h3{font-size:13px;margin:16px 0 6px}.check{display:flex;gap:9px;align-ite
 .summary{flex-wrap:wrap;gap:20px 40px}.stat{min-width:104px}
 @media(max-width:760px){.toolbar>button{flex:1}.summary{gap:14px 22px}.batch-list li{grid-template-columns:1fr}}
 @media(forced-colors:active){.resource-row[aria-selected=true]{outline:2px solid Highlight}}
+.toolbar{flex-wrap:wrap}.search{min-width:220px}

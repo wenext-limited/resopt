@@ -97,3 +97,10 @@ test('browser-displayable formats exclude HEIC', () => {
   assert.equal(api.displayableInBrowser('heic'), false);
   assert.equal(api.displayableInBrowser('webp'), true);
 });
+
+test('UI sources contain no raw control characters (HTML parsing would corrupt them)', () => {
+  for (const name of [...FILES, 'style.css']) {
+    const bad = [...ui(name)].filter(ch => ch.charCodeAt(0) < 32 && !'\n\r\t'.includes(ch));
+    assert.equal(bad.length, 0, name);
+  }
+});

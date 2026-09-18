@@ -163,6 +163,11 @@ function preferredCandidate(r) {
   if (!r) return null;
   const s = operation(r);
   if (s?.state === 'applied') return s.candidate;
+  // In the warnings view the point is to review the warning candidate itself.
+  if (state.mode === 'warnings') {
+    const warnings = (r.candidates || []).map((c, i) => [c, i]).filter(([c]) => warningKind(c)).sort((a, b) => a[0].bytes - b[0].bytes);
+    if (warnings.length) return warnings[0][1];
+  }
   if (Number.isInteger(r.smallest_candidate)) return r.smallest_candidate;
   const warning = (r.candidates || []).findIndex(c => warningKind(c));
   return warning >= 0 ? warning : (r.candidates?.length ? 0 : null);

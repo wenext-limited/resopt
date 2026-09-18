@@ -100,6 +100,15 @@ impl BatchPolicy {
             })
             && (self.cross_format || !crossing)
             && (!crossing || resource.resource.format_lock.is_none())
+            // Asset files are opened by path, and paths are often built at
+            // runtime. Renaming them is a per-file decision with its own
+            // reference preview, never a batch action.
+            && !(crossing
+                && resource
+                    .resource
+                    .android
+                    .as_ref()
+                    .is_some_and(|a| a.area == "assets"))
             && (self.formats.is_empty() || self.formats.contains(&candidate.format))
             && (!candidate.lossy
                 || self.min_score.is_none_or(|floor| {

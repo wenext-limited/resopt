@@ -193,6 +193,16 @@ enum Commands {
         #[arg(long)]
         dry_run: bool,
     },
+    /// Measure the size difference between two builds (APK, AAB, IPA or ZIP).
+    PackageDiff {
+        before: PathBuf,
+        after: PathBuf,
+        #[arg(long)]
+        json: bool,
+        /// Entries to list, largest change first.
+        #[arg(long, default_value_t = 20)]
+        top: usize,
+    },
     /// Show or clear the persistent analysis cache.
     Cache {
         /// Delete every cached result.
@@ -286,6 +296,43 @@ fn run(cli: Cli) -> Result<()> {
                             tool.name, tool.purpose, tool.install
                         )?;
                     }
+                }
+            }
+        }
+        Commands::PackageDiff {
+            before,
+            after,
+            json,
+            top,
+        } => {
+            let diff = resopt::package_diff(before, after)?;
+            if json {
+                output_json(&mut stdout, &diff)?;
+            } else {
+                let signed = |before: u64, after: u64| after as i128 - before as i128;
+                writeln!(
+                    stdout,
+                    "Package file: {} -> {} bytes ({:+})\nStored entries: {} -> {} bytes ({:+})\n{} changed, {} added, {} removed",
+                    diff.before_file_bytes,
+                    diff.after_file_bytes,
+                    signed(diff.before_file_bytes, diff.after_file_bytes),
+                    diff.before_compressed_bytes,
+                    diff.after_compressed_bytes,
+                    signed(diff.before_compressed_bytes, diff.after_compressed_bytes),
+                    diff.changed,
+                    diff.added,
+                    diff.removed
+                )?;
+                for entry in diff.entries.iter().take(top) {
+                    writeln!(
+                        stdout,
+                        "{:+}\t{}",
+                        signed(
+                            entry.before_bytes.unwrap_or(0),
+                            entry.after_bytes.unwrap_or(0)
+                        ),
+                        entry.name
+                    )?;
                 }
             }
         }

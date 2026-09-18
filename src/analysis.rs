@@ -267,8 +267,8 @@ impl AnalysisControl {
     }
 }
 
-/// Bounds decoded pixels in flight so more workers never raise peak memory
-/// beyond two maximum-size images, the pre-existing worst case.
+/// Bounds decoded source pixels in flight to one maximum-size image, so adding
+/// workers speeds up ordinary assets without multiplying peak memory.
 pub(crate) struct PixelBudget {
     capacity: usize,
     available: Mutex<usize>,
@@ -378,7 +378,7 @@ pub(crate) fn analyze_with_observer(
     let pool = rayon::ThreadPoolBuilder::new()
         .num_threads(workers)
         .build()?;
-    let budget = PixelBudget::new(options.max_pixels.saturating_mul(2));
+    let budget = PixelBudget::new(options.max_pixels);
     let context = ImageContext {
         root: &inventory.root,
         out: &out,
@@ -571,7 +571,7 @@ fn restore_original_artifact(
 ) -> Result<()> {
     if hit.status == "candidates_available" {
         let artifact = PathBuf::from(format!("originals/{index}.{}", resource.format));
-        write_new(&out.join(&artifact), bytes)?;
+        crate::filesystem::write_artifact(&out.join(&artifact), bytes)?;
         hit.original_artifact = Some(artifact);
     }
     Ok(())

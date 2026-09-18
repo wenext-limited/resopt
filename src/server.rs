@@ -236,6 +236,9 @@ fn handle(mut request: Request, app: &Arc<App>, session: &Session) {
             session.page.as_bytes().to_vec(),
         );
     }
+    if get && route == "/favicon.ico" {
+        return respond(request, 204, "image/x-icon", vec![]);
+    }
     if get && !route.starts_with("/api/") {
         return serve_artifact(request, app, route);
     }

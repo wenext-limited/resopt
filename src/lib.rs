@@ -7,7 +7,13 @@
 #![cfg_attr(feature = "native", doc = include_str!("../README.md"))]
 
 #[cfg(feature = "native")]
+mod aapt;
+#[cfg(feature = "native")]
 mod analysis;
+#[cfg(feature = "native")]
+mod package_diff;
+#[cfg(feature = "native")]
+pub use package_diff::{EntryChange, PackageDiff, package_diff};
 #[cfg(feature = "native")]
 mod analyze_image;
 #[cfg(feature = "native")]

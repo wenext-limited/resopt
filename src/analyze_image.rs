@@ -3,7 +3,7 @@ use crate::{
     ImageCandidate, Resource, ResourceAnalysis,
     analysis::{AnalysisControl, AnalysisOptions, PixelBudget},
     android,
-    filesystem::{hash, write_new},
+    filesystem::{hash, write_artifact},
     image_backend, optimizer,
     timings::{Phase, Timings},
     webp_backend,
@@ -284,8 +284,8 @@ fn analyze_into(
             let preview = PathBuf::from(format!("previews/{stem}.png"));
             let thumbnail = timings.time(Phase::Preview, || image_backend::preview(&after))?;
             timings.time(Phase::Write, || -> Result<()> {
-                write_new(&out.join(&artifact), &bytes)?;
-                write_new(&out.join(&preview), &thumbnail)
+                write_artifact(&out.join(&artifact), &bytes)?;
+                write_artifact(&out.join(&preview), &thumbnail)
             })?;
             candidate.sha256 = Some(hash(&bytes));
             candidate.artifact = Some(artifact);
@@ -312,8 +312,8 @@ fn analyze_into(
         let thumbnail = timings.time(Phase::Preview, || image_backend::preview(&decoded))?;
         let artifact = PathBuf::from(format!("originals/{index}.{}", resource.format));
         timings.time(Phase::Write, || -> Result<()> {
-            write_new(&out.join(&preview), &thumbnail)?;
-            write_new(&out.join(&artifact), original)
+            write_artifact(&out.join(&preview), &thumbnail)?;
+            write_artifact(&out.join(&artifact), original)
         })?;
         result.original_preview = Some(preview);
         result.original_artifact = Some(artifact);

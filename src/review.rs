@@ -259,6 +259,13 @@ impl Review {
                 ensure!(!candidate.lossy, "PNG must be lossless");
                 optimizer::verify(&original, &optimized, self.report.options.png_reductions)?;
             }
+            "svga" => {
+                ensure!(
+                    !candidate.lossy && resource.resource.format == "svga",
+                    "SVGA candidates are lossless and same-format"
+                );
+                crate::svga::verify(&original, &optimized)?;
+            }
             "webp" if !candidate.lossy => {
                 ensure!(
                     resource.resource.format == "png",
@@ -430,6 +437,26 @@ impl Review {
             edits.extend(reference_edits);
             references = Some(context);
         }
+        // Where the SDK is installed, the build tools get the final say on
+        // every file under `res/` (this also checks nine-patch markers).
+        if let (Some(a), Some(aapt2)) = (android.filter(|a| a.area == "res"), crate::aapt::aapt2())
+        {
+            let directory = rel
+                .parent()
+                .and_then(|p| p.file_name())
+                .and_then(|n| n.to_str())
+                .context("resource directory is not UTF-8")?;
+            let file_name = target
+                .file_name()
+                .and_then(|n| n.to_str())
+                .context("resource name is not UTF-8")?;
+            crate::aapt::compile(aapt2, directory, file_name, &optimized).with_context(|| {
+                format!(
+                    "Android build tools rejected the candidate for {}",
+                    a.name.as_deref().unwrap_or(file_name)
+                )
+            })?;
+        }
         if target != *rel {
             ensure!(
                 current(&self.report.root, &target)?.is_none(),
@@ -441,6 +468,39 @@ impl Review {
             edits.insert(0, (rel.clone(), Some(original), Some(optimized)));
         }
         Ok(Prepared { edits, references })
+    }
+
+    /// AAPT2-compiled size of the original and the candidate. This is the size
+    /// the build packages, which differs from source bytes for PNG files.
+    fn compiled_sizes(
+        &self,
+        resource: &ResourceAnalysis,
+        target: &Path,
+        candidate: &crate::ImageCandidate,
+    ) -> Result<Option<serde_json::Value>> {
+        let Some(aapt2) = crate::aapt::aapt2() else {
+            return Ok(None);
+        };
+        let rel = &resource.resource.path;
+        let name = |path: &Path| {
+            path.file_name()
+                .and_then(|n| n.to_str())
+                .map(str::to_string)
+        };
+        let (Some(directory), Some(before_name), Some(after_name)) =
+            (rel.parent().and_then(name), name(rel), name(target))
+        else {
+            return Ok(None);
+        };
+        let original = bounded_read(&contained_file(&self.report.root, rel)?)?;
+        let artifact = candidate.artifact.as_ref().context("no artifact")?;
+        let optimized = bounded_read(&contained_file(&self.directory, artifact)?)?;
+        let before = crate::aapt::compile(aapt2, &directory, &before_name, &original)?;
+        let after = crate::aapt::compile(aapt2, &directory, &after_name, &optimized)?;
+        Ok(Some(serde_json::json!({
+            "original_compiled_bytes": before.flat_bytes,
+            "candidate_compiled_bytes": after.flat_bytes,
+        })))
     }
 
     #[cfg(test)]
@@ -477,8 +537,15 @@ impl Review {
             .filter(|(path, _, _)| path != &r.resource.path && path != &target)
             .map(|(path, _, _)| path)
             .collect();
+        let compiled = r
+            .resource
+            .android
+            .as_ref()
+            .filter(|a| a.area == "res")
+            .and_then(|_| self.compiled_sizes(r, &target, c).ok().flatten());
         let android = r.resource.android.as_ref().map(|a| {
             serde_json::json!({
+                "aapt2": compiled,
                 "area": a.area,
                 "resource_type": a.res_type,
                 "resource_name": a.name,
@@ -807,6 +874,9 @@ fn current(root: &Path, relative: &Path) -> Result<Option<String>> {
     Ok(Some(hash(&bounded_read(&path)?)))
 }
 
+#[cfg(test)]
+#[path = "review_android_tests.rs"]
+mod android_tests;
 #[cfg(test)]
 #[path = "review_tests.rs"]
 mod tests;

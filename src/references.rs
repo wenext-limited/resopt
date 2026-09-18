@@ -26,6 +26,10 @@ pub(crate) fn supported(path: &Path) -> bool {
         path.extension().and_then(|v| v.to_str()),
         Some(
             "swift"
+                | "kt"
+                | "kts"
+                | "java"
+                | "gradle"
                 | "m"
                 | "mm"
                 | "h"

@@ -1,5 +1,5 @@
 // Batch apply and restore-all: explicit policy → preview → confirm → per-file outcomes.
-let batchPlan = null, batchTimer = null;
+let batchPlan = null, batchTimer = null, restoringAll = false;
 
 function batchPolicy() {
   const warnings = [];
@@ -71,10 +71,11 @@ async function startBatch(route, body, restoring) {
 
 function setupBatch() {
   for (const id of ['batch-lossless', 'batch-lossy', 'batch-cross', 'batch-alpha', 'batch-quality', 'batch-scope']) $(id).addEventListener('change', syncBatchForm);
-  $('batch-open').addEventListener('click', () => { $('batch-title').textContent = t('batchTitle'); batchView('policy'); syncBatchForm(); $('batch-dialog').showModal(); $('batch-lossless').focus(); });
+  $('batch-open').addEventListener('click', () => { restoringAll = false; $('batch-title').textContent = t('batchTitle'); batchView('policy'); syncBatchForm(); $('batch-dialog').showModal(); $('batch-lossless').focus(); });
   $('batch-preview').addEventListener('click', previewBatch);
   $('batch-back').addEventListener('click', () => batchView('policy'));
-  $('batch-confirm').addEventListener('click', () => startBatch('/api/batch/apply', { policy: batchPlan.policy, token: batchPlan.token }, false));
+  // One handler decides by mode, so a restore can never also start an apply.
+  $('batch-confirm').addEventListener('click', () => (restoringAll ? startBatch('/api/restore-all', {}, true) : startBatch('/api/batch/apply', { policy: batchPlan.policy, token: batchPlan.token }, false)));
   $('batch-stop').addEventListener('click', async () => { $('batch-stop').disabled = true; try { await api('/api/batch/cancel', {}); } catch { /* shown by the watcher */ } });
   for (const id of ['batch-close', 'batch-done']) $(id).addEventListener('click', () => $('batch-dialog').close());
   $('batch-dialog').addEventListener('cancel', event => { if (!$('batch-stop').hidden) event.preventDefault(); });
@@ -82,8 +83,8 @@ function setupBatch() {
     const pending = Object.values(state.operations).filter(s => s.state !== 'original').length;
     $('batch-title').textContent = t('restoreAllTitle'); $('batch-summary').textContent = t('restoreAllIntro'); $('batch-items').replaceChildren();
     $('batch-confirm').textContent = t('restoreAllConfirm', count(pending)); $('batch-confirm').classList.remove('danger');
-    $('batch-confirm').onclick = event => { event.stopImmediatePropagation(); $('batch-confirm').onclick = null; startBatch('/api/restore-all', {}, true); };
-    batchView('plan'); $('batch-dialog').showModal(); $('batch-back').hidden = true; $('batch-confirm').focus();
+    batchView('plan'); $('batch-dialog').showModal(); restoringAll = true; $('batch-back').hidden = true; $('batch-confirm').focus();
   });
-  $('batch-dialog').addEventListener('close', () => { $('batch-back').hidden = false; $('batch-confirm').onclick = null; clearTimeout(batchTimer); });
+  // `close` is dispatched asynchronously; ignore it if the dialog was reopened meanwhile.
+  $('batch-dialog').addEventListener('close', () => { if ($('batch-dialog').open) return; $('batch-back').hidden = false; restoringAll = false; clearTimeout(batchTimer); });
 }
