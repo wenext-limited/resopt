@@ -80,4 +80,4 @@ with a stated limitation. Evidence lives in `docs/validation.md` and
 ## Release
 - [x] fmt, clippy, unit/integration, native codec, WASM and browser verification pass.
 - [x] CI green on macOS, Linux, Windows.
-- [ ] GitHub Release + crates.io published; checksums, binaries, clean install and main workflows verified.
+- [x] v0.6.0 on GitHub Releases and crates.io; SHA256SUMS verified for all four archives; the downloaded macOS binary passes the 13-step browser test; `cargo install resopt-cli --version 0.6.0` into a clean root passes analyze → apply → restore; every release binary passed the same smoke test on its own platform in CI.
