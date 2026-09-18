@@ -424,3 +424,40 @@ fn loose_conversion_without_references_is_reviewable() {
     review.restore(0).unwrap();
     assert_eq!(fs::read(root.path().join("picture.png")).unwrap(), original);
 }
+
+#[cfg(target_os = "macos")]
+#[test]
+fn appearance_rtl_and_scale_entries_survive_a_format_change_and_restore() {
+    let (root, _out, review, _original) = fixture("heic", true);
+    let dir = root.path().join("Assets.xcassets/Example.imageset");
+    let contents = br#"{
+  "images" : [
+    { "filename" : "picture.png", "idiom" : "universal", "scale" : "2x" },
+    { "filename" : "picture.png", "idiom" : "universal", "scale" : "3x",
+      "appearances" : [ { "appearance" : "luminosity", "value" : "dark" } ] },
+    { "filename" : "picture.png", "idiom" : "universal", "scale" : "2x",
+      "language-direction" : "right-to-left", "x-custom" : { "keep" : [1, 2] } },
+    { "idiom" : "universal", "scale" : "1x" }
+  ],
+  "info" : { "author" : "xcode", "version" : 1 },
+  "properties" : { "preserves-vector-representation" : false, "x-team" : "design" }
+}"#;
+    fs::write(dir.join("Contents.json"), contents).unwrap();
+    review.apply(0, 0, true).unwrap();
+    let value: serde_json::Value =
+        serde_json::from_slice(&fs::read(dir.join("Contents.json")).unwrap()).unwrap();
+    let images = value["images"].as_array().unwrap();
+    assert_eq!(images.len(), 4);
+    for image in &images[..3] {
+        assert_eq!(image["filename"], "picture.heic");
+    }
+    assert!(images[3].get("filename").is_none());
+    assert_eq!(images[1]["appearances"][0]["value"], "dark");
+    assert_eq!(images[2]["language-direction"], "right-to-left");
+    assert_eq!(images[2]["x-custom"]["keep"][1], 2);
+    assert_eq!(images[0]["scale"], "2x");
+    assert_eq!(value["properties"]["x-team"], "design");
+    review.restore(0).unwrap();
+    // Restoration is byte-exact, including the original formatting.
+    assert_eq!(fs::read(dir.join("Contents.json")).unwrap(), contents);
+}

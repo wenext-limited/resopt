@@ -5,15 +5,15 @@ resolver = "2"
 
 [package]
 name = "resopt-cli"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.89"
-description = "Plan, verify, and apply resource optimizations for Apple projects."
+description = "Find, review and safely apply resource optimizations for Apple and Android projects."
 license = "MIT"
 readme = "README.md"
 repository = "https://github.com/wenext-limited/resopt"
 documentation = "https://docs.rs/resopt-cli"
-keywords = ["xcode", "xcassets", "png", "optimization", "cli"]
+keywords = ["xcode", "android", "png", "webp", "optimization"]
 categories = ["command-line-utilities", "multimedia::images"]
 
 [lib]
