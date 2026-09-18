@@ -20,7 +20,7 @@ Tests that need platform tools skip themselves when the tool is missing: ImageIO
 
 ```sh
 cargo build --release
-cp -R /path/to/sample-project /tmp/resopt-e2e-project
+mkdir /tmp/resopt-e2e-project && node tests/browser/fixture.mjs /tmp/resopt-e2e-project   # or copy a real project
 node tests/browser/e2e.mjs target/release/resopt /tmp/resopt-e2e-project /tmp/resopt-e2e-shots
 ```
 

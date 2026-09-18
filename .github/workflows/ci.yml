@@ -71,3 +71,29 @@ jobs:
           name: browser-site
           path: web/dist/
           if-no-files-found: error
+
+  ui-e2e:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ui-e2e
+      - run: cargo build --locked --release --bin resopt
+      - name: Drive the embedded UI in headless Chrome
+        run: |
+          mkdir "$RUNNER_TEMP/project"
+          node tests/browser/fixture.mjs "$RUNNER_TEMP/project"
+          node tests/browser/e2e.mjs target/release/resopt "$RUNNER_TEMP/project" "$RUNNER_TEMP/shots"
+        env:
+          CHROME_BIN: /usr/bin/google-chrome
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ui-e2e-screenshots
+          path: ${{ runner.temp }}/shots/
+          if-no-files-found: ignore

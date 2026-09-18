@@ -373,8 +373,23 @@ impl Review {
                 .is_some_and(|e| e == "xcassets")
         });
         if in_catalog {
+            // Re-scan only the catalog that owns the file: a batch applies
+            // thousands of files and must not walk the whole project for each.
+            let catalog: PathBuf = rel
+                .components()
+                .scan(false, |done, part| {
+                    if *done {
+                        return None;
+                    }
+                    *done = Path::new(part.as_os_str())
+                        .extension()
+                        .is_some_and(|e| e == "xcassets");
+                    Some(part)
+                })
+                .collect();
+            contained_directory(&self.report.root, &catalog)?;
             let inventory = crate::catalog::scan_with_options(
-                &self.report.root,
+                self.report.root.join(&catalog),
                 crate::ScanOptions {
                     include_ignored: true,
                 },
@@ -382,13 +397,14 @@ impl Review {
             let asset = inventory
                 .assets
                 .iter()
-                .find(|a| a.path == *rel)
+                .find(|a| catalog.join(&a.path) == *rel)
                 .context("image is not a supported catalog rendition")?;
             ensure!(
                 asset.reason.is_none() || asset.reason.as_deref() == Some("unsupported_format"),
                 "catalog resource excluded"
             );
-            let contents = contained_file(&self.report.root, &asset.contents_path)?;
+            let contents_path = catalog.join(&asset.contents_path);
+            let contents = contained_file(&self.report.root, &contents_path)?;
             let bytes = read_verified(&contents, &asset.contents_sha256)?;
             if crossing {
                 let filename = rel
@@ -402,7 +418,7 @@ impl Review {
                 let replacement =
                     xcassets::replace_rendition_filename(&bytes, filename, replacement)?;
                 edits.push((
-                    asset.contents_path.clone(),
+                    contents_path.clone(),
                     Some(bytes),
                     Some(replacement.contents),
                 ));
@@ -850,6 +866,24 @@ fn safe_directory(root: &Path, relative: &Path) -> Result<()> {
         !fs::symlink_metadata(&path)?.file_type().is_symlink() && path.is_dir(),
         "unsafe operation directory"
     );
+    Ok(())
+}
+
+/// A directory under `root` reached without crossing a symlink.
+fn contained_directory(root: &Path, relative: &Path) -> Result<()> {
+    let mut path = root.to_path_buf();
+    for part in relative.components() {
+        let std::path::Component::Normal(name) = part else {
+            bail!("unsafe path");
+        };
+        path.push(name);
+        ensure!(
+            !fs::symlink_metadata(&path)?.file_type().is_symlink(),
+            "symlink refused: {}",
+            path.display()
+        );
+    }
+    ensure!(path.is_dir(), "not a directory: {}", path.display());
     Ok(())
 }
 

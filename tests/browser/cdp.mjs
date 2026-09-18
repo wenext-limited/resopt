@@ -16,7 +16,7 @@ export async function launch({ width = 1440, height = 900 } = {}) {
   let chrome, endpoint;
   for (const binary of CANDIDATES) {
     try {
-      chrome = spawn(binary, ['--headless=new', '--disable-gpu', '--no-first-run', '--remote-debugging-port=0', `--user-data-dir=${profile}`, `--window-size=${width},${height}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
+      chrome = spawn(binary, ['--headless=new', '--disable-gpu', '--no-first-run', ...(process.env.CI ? ['--no-sandbox'] : []), '--remote-debugging-port=0', `--user-data-dir=${profile}`, `--window-size=${width},${height}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
       endpoint = await new Promise((resolve, reject) => {
         let log = '';
         chrome.stderr.on('data', chunk => { log += chunk; const m = log.match(/DevTools listening on (ws:\/\/\S+)/); if (m) resolve(m[1]); });

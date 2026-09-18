@@ -109,7 +109,6 @@ impl ProjectLock {
             let token = format!("pid={} lock={:p}\n", std::process::id(), &file);
             file.set_len(0)?;
             file.write_all(token.as_bytes())?;
-            file.sync_all()?;
             // A previous holder may have unlinked this path between our open and
             // lock; only a lock on the file currently at `path` counts.
             // Windows denies reads through a second handle while the lock is
