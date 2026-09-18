@@ -3,8 +3,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const vm = require('node:vm');
-const html = fs.readFileSync(path.join(__dirname, '../src/report.html'), 'utf8');
-const script = html.match(/<script>\s*([\s\S]*?)<\/script>/)[1];
+const script = fs.readFileSync(path.join(__dirname, '../src/report.js'), 'utf8');
 const helpers = script.slice(script.indexOf('const number ='), script.indexOf('function setSize'));
 const api = vm.runInNewContext(`${helpers}; ({formatSize, assetUrl})`);
 

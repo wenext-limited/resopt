@@ -1,0 +1,118 @@
+name: Release CLI
+
+on:
+  push:
+    tags: ['v[0-9]*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      prerelease: ${{ steps.version.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - id: version
+        name: Require the tag to match Cargo.toml
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          python - <<'PY'
+          import os, re, tomllib
+          from pathlib import Path
+          tag = os.environ['RELEASE_TAG']
+          version = tomllib.loads(Path('Cargo.toml').read_text())['package']['version']
+          if not re.fullmatch(r'v\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?', tag) or tag != f'v{version}':
+              raise SystemExit(f'Tag {tag!r} must match Cargo.toml version v{version}')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write(f'version={version}\nprerelease={str("-" in version).lower()}\n')
+          PY
+
+  checks:
+    needs: version
+    uses: ./.github/workflows/ci.yml
+
+  binaries:
+    needs: [version, checks]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+    runs-on: ${{ matrix.os }}
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Build native CLI
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+        shell: bash
+        run: cargo build --locked --release --bin resopt --target "$RELEASE_TARGET"
+      - name: Smoke-test and package
+        env:
+          RELEASE_VERSION: ${{ needs.version.outputs.version }}
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: python .github/scripts/package-release.py
+      - uses: actions/upload-artifact@v4
+        with:
+          name: resopt-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    needs: [version, binaries]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: resopt-*
+          merge-multiple: true
+          path: dist
+      - name: Generate checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz *.zip > SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+          PRERELEASE: ${{ needs.version.outputs.prerelease }}
+        shell: bash
+        run: |
+          args=(--verify-tag --generate-notes --title "resopt $RELEASE_TAG")
+          if [[ "$PRERELEASE" == "true" ]]; then
+            args+=(--prerelease --latest=false)
+          fi
+          gh release create "$RELEASE_TAG" dist/* "${args[@]}"

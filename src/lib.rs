@@ -13,6 +13,9 @@ mod image_backend;
 mod optimizer;
 mod plan;
 mod report;
+mod review;
+mod server;
+pub use server::serve;
 mod resources;
 pub use analysis::{
     AnalysisOptions, AnalysisReport, ImageCandidate, ResourceAnalysis, analyze,

@@ -62,6 +62,12 @@ enum Commands {
     },
     /// Refresh report.html from saved analysis.json without re-encoding resources.
     Report { directory: PathBuf },
+    /// Open a loopback report server with per-image apply and restore.
+    Serve {
+        directory: PathBuf,
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+    },
     /// Stage verified PNG candidates and originals into a new plan directory.
     Plan {
         #[arg(default_value = ".")]
@@ -108,6 +114,7 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<()> {
     let mut stdout = io::stdout().lock();
     match cli.command {
+        Commands::Serve { directory, port } => resopt::serve(directory, port)?,
         Commands::Report { directory } => {
             let path = resopt::refresh_report(directory)?;
             writeln!(

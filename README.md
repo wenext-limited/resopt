@@ -6,6 +6,31 @@
 试算不同格式与质量的候选，并生成带预览的报告。现有 `plan / apply / restore` 提供严格无损 PNG 的可恢复修改流程。
 Numi 独立负责资源代码生成，`resopt` 不依赖它。
 
+## GitHub 二进制与自动发布
+
+推送与 `Cargo.toml` 版本一致的 `v<版本>` tag，会先执行三平台 CI，再编译并发布：
+
+- macOS Apple Silicon：`aarch64-apple-darwin`（macOS 13+）。
+- macOS Intel：`x86_64-apple-darwin`（macOS 13+）。
+- Linux x86_64：`x86_64-unknown-linux-gnu`（Ubuntu 22.04 构建）。
+- Windows x86_64：`x86_64-pc-windows-msvc`。
+
+[GitHub Releases](https://github.com/wenext-limited/resopt/releases) 提供压缩包和 `SHA256SUMS`。
+解压后将 `resopt`（Windows 为 `resopt.exe`）放到 PATH 即可；下载二进制无需安装 Rust。
+JPEG／HEIC 编码仍仅支持 macOS；其它平台可清点资源并执行严格无损 PNG 流程。
+
+发布前更新并提交 `Cargo.toml`、`Cargo.lock` 中的版本，确认 CI 通过，再创建并推送 tag：
+
+```sh
+# 示例：仅在 Cargo.toml 已更新为 0.3.0 时使用这个版本号
+ git tag -a v0.3.0 -m 'resopt 0.3.0'
+ git push origin v0.3.0
+```
+
+版本不匹配或任意测试／构建失败时不会发布。`v0.3.0-rc.1` 这类 tag 会标记为预发布。
+工作流使用 GitHub 自动提供的 `GITHUB_TOKEN`；无需额外发布密钥，**不会自动发布 crates.io**。
+重跑不会覆盖已存在的 GitHub Release；上传失败若留下草稿，应先检查草稿再重试。
+
 ## 安装
 
 crates.io 包名为 **`resopt-cli`**，安装后的命令仍是 **`resopt`**：
@@ -112,8 +137,7 @@ HEIC 有损编码可能让 Alpha 相差一个 8 位量化级；默认上限为 `
 总节省量按每个文件仅取一个最小候选计算；有损候选可能采用不同质量档位。
 
 **分析不会修改项目。** 报告不是 `apply` 可执行的计划。
-JPEG／HEIC 的跨格式替换、`Contents.json` 更新、目录外文件引用改写和对应恢复事务尚未接入 `apply`。
-这避免在仅审阅候选时改动真实资源或破坏文件名引用。
+传统 `plan/apply/restore` 命令仍面向严格无损 PNG。分析报告的逐张应用与跨格式替换通过下述 `serve` 流程执行。
 
 ### 刷新已有报告界面
 
@@ -123,6 +147,32 @@ resopt report /tmp/resopt-analysis
 
 读取同目录的 `analysis.json` 并更新 `report.html`，不重新编码，不改动测量数据或候选文件。
 HTML 内嵌交互所需的数据与脚本，无需网络或额外前端构建步骤。
+
+### 在报告页面优化图片
+
+```sh
+resopt serve /tmp/resopt-analysis
+# 可选固定端口，默认自动分配空闲端口
+resopt serve /tmp/resopt-analysis --port 8417
+```
+
+打开终端输出的 `http://127.0.0.1:<端口>/` 地址，选择图片与候选，点击「优化这张图片」，
+核对格式、质量和节省体积后确认。JPEG／HEIC 需要明确确认有损优化；页面也提供「恢复原图」。
+**直接打开静态 HTML 仍只供审阅**，写入由本地 Rust 服务完成。按 Ctrl-C 停止服务。
+
+- 支持无损 PNG、JPEG／HEIC 候选。Asset Catalog 跨格式替换会更新所有匹配的
+  `Contents.json` rendition 文件名，保留其它字段；恢复时还原原始 JSON 字节。
+- 散落图片仅支持同格式替换；需要改扩展名的候选暂不应用，因为代码、工程文件或运行时可能引用原文件名。
+- AppIcon、拉伸图片和多帧图片保留现有限制。候选会再次解码或严格验证 PNG，检查源文件哈希、尺寸、方向和 Alpha。
+- 服务启动时固定候选哈希，拒绝运行期间被替换的候选；服务重新启动后会重新验证所选候选。
+- 原始字节、候选和操作记录保存在报告目录的 `operations/` 中，**需要恢复时请保留整个报告目录**。
+  操作中断后可重启服务恢复；对同一个 `Contents.json` 的多次转换须按后做先恢复的顺序操作。
+  恢复拒绝覆盖后续人工修改。每个文件原子替换，跨文件操作通过持久记录恢复，并非单个原子事务。
+- 服务只监听 `127.0.0.1`，写入接口检查 Host、Origin 和随机会话令牌，不接受客户端传入的文件路径。
+- 概览体积与图片对比保留分析时的快照；已应用状态单独展示，需要新的整体统计时重新运行 `analyze`。
+
+页面支持「跟随系统／浅色／深色」主题并记住选择，图片的棋盘／白色／深色预览背景独立设置。
+页面结构由 Maud 在 Rust 中生成，CSS 和浏览器交互脚本编译进 CLI；不需要 WebAssembly 或前端构建工具。
 
 ### 分析边界
 
