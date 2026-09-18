@@ -2,7 +2,7 @@ use crate::{
     ImageDifference, ImageInfo, Policy, Resource, ResourceInventory,
     filesystem::{contained_file, hash, write_new},
     image_backend, optimizer,
-    resources::{bounded_read, inventory},
+    resources::{bounded_read, inventory_with_options},
 };
 use anyhow::{Context, Result, ensure};
 use rayon::prelude::*;
@@ -18,6 +18,7 @@ use std::{
 #[serde(default, deny_unknown_fields)]
 pub struct AnalysisOptions {
     pub qualities: Vec<u8>,
+    pub include_ignored: bool,
     pub jobs: usize,
     /// All sizes are included by default, unlike the legacy lossless plan.
     pub min_input_bytes: u64,
@@ -30,6 +31,7 @@ impl Default for AnalysisOptions {
     fn default() -> Self {
         Self {
             qualities: vec![75, 85, 95],
+            include_ignored: false,
             jobs: 2,
             min_input_bytes: 0,
             min_savings_bytes: 1,
@@ -122,7 +124,12 @@ pub fn analyze_with_progress(
     if !options.probe_only {
         image_backend::check_encoders()?;
     }
-    let inventory = inventory(root)?;
+    let inventory = inventory_with_options(
+        root,
+        crate::ScanOptions {
+            include_ignored: options.include_ignored,
+        },
+    )?;
     let out = out.as_ref();
     let parent = fs::canonicalize(
         out.parent()

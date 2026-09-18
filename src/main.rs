@@ -1,8 +1,6 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
-use resopt::{
-    AnalysisOptions, Policy, analyze_with_progress, apply, create_plan, inventory, restore, scan,
-};
+use resopt::{AnalysisOptions, Policy, analyze_with_progress, apply, create_plan, restore};
 use serde::Serialize;
 use std::{
     fs,
@@ -38,6 +36,9 @@ enum Commands {
         /// Use the legacy catalog-rendition-only inventory.
         #[arg(long)]
         catalog_only: bool,
+        /// Include files matched by Git ignore rules.
+        #[arg(long)]
+        include_ignored: bool,
     },
     /// Probe all images and compare lossless PNG / JPEG / HEIC candidates without modifying sources.
     Analyze {
@@ -59,6 +60,9 @@ enum Commands {
         max_alpha_error: f32,
         #[arg(long)]
         json: bool,
+        /// Include files matched by Git ignore rules.
+        #[arg(long)]
+        include_ignored: bool,
     },
     /// Refresh report.html from saved analysis.json without re-encoding resources.
     Report { directory: PathBuf },
@@ -80,6 +84,9 @@ enum Commands {
         policy: Option<PathBuf>,
         #[arg(long)]
         json: bool,
+        /// Include files matched by Git ignore rules.
+        #[arg(long)]
+        include_ignored: bool,
     },
     /// Apply the exact candidates in a reviewed plan directory.
     Apply {
@@ -175,8 +182,10 @@ fn run(cli: Cli) -> Result<()> {
             root,
             json,
             catalog_only: true,
+            include_ignored,
         } => {
-            let inventory = scan(root)?;
+            let inventory =
+                resopt::scan_with_options(root, resopt::ScanOptions { include_ignored })?;
             if json {
                 output_json(&mut stdout, &inventory)?;
             } else {
@@ -209,8 +218,10 @@ fn run(cli: Cli) -> Result<()> {
             root,
             json,
             catalog_only: false,
+            include_ignored,
         } => {
-            let report = inventory(root)?;
+            let report =
+                resopt::inventory_with_options(root, resopt::ScanOptions { include_ignored })?;
             if json {
                 output_json(&mut stdout, &report)?;
             } else {
@@ -248,6 +259,7 @@ fn run(cli: Cli) -> Result<()> {
             jobs,
             min_input_bytes,
             probe_only,
+            include_ignored,
             max_alpha_error,
             json,
         } => {
@@ -256,6 +268,7 @@ fn run(cli: Cli) -> Result<()> {
                 jobs,
                 min_input_bytes,
                 probe_only,
+                include_ignored,
                 max_alpha_error,
                 ..AnalysisOptions::default()
             };
@@ -292,14 +305,16 @@ fn run(cli: Cli) -> Result<()> {
             out,
             policy,
             json,
+            include_ignored,
         } => {
-            let policy = match policy {
+            let mut policy = match policy {
                 Some(path) => {
                     toml::from_str::<Policy>(&fs::read_to_string(path).context("reading policy")?)
                         .context("invalid policy")?
                 }
                 None => Policy::default(),
             };
+            policy.include_ignored |= include_ignored;
             let plan = create_plan(root, &out, policy)?;
             if json {
                 output_json(&mut stdout, &plan)?;

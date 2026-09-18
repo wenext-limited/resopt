@@ -35,7 +35,16 @@ pub struct ResourceInventory {
 /// Inventory all files other than recognized source/tooling files and build/VCS
 /// directories. Unknown files stay visible. This is not build-target resolution.
 pub fn inventory(root: impl AsRef<Path>) -> Result<ResourceInventory> {
-    let catalogs = catalog::scan(root)?;
+    inventory_with_options(root, crate::ScanOptions::default())
+}
+
+pub fn inventory_with_options(
+    root: impl AsRef<Path>,
+    options: crate::ScanOptions,
+) -> Result<ResourceInventory> {
+    let root = fs::canonicalize(root)?;
+    let filter = crate::scan_options::ScanFilter::new(&root, options)?;
+    let catalogs = catalog::scan_filtered(&root, &filter)?;
     let references: BTreeMap<_, _> = catalogs
         .assets
         .into_iter()
@@ -60,6 +69,13 @@ pub fn inventory(root: impl AsRef<Path>) -> Result<ResourceInventory> {
             }
         };
         let relative = entry.path().strip_prefix(&report.root)?.to_path_buf();
+        if !filter.allows(entry.path()) {
+            if entry.file_type().is_dir() {
+                report.excluded_directories.push(relative);
+                walk.skip_current_dir();
+            }
+            continue;
+        }
         if entry.file_type().is_symlink() {
             report
                 .diagnostics
@@ -269,6 +285,8 @@ fn is_source_or_tooling(name: &str, extension: &str) -> bool {
                 | "kt"
                 | "java"
                 | "py"
+                | "pyc"
+                | "pyo"
                 | "sh"
                 | "rb"
                 | "toml"

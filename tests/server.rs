@@ -158,7 +158,23 @@ fn loopback_api_requires_session_and_origin_and_applies_only_selected_candidate(
     );
     assert!(request(address, "GET", "/../Cargo.toml", "", "").starts_with("HTTP/1.1 404"));
     assert_eq!(fs::read(asset.join("image.png")).unwrap(), original);
-    let result = request(address, "POST", "/api/apply", &headers, body);
+    assert!(
+        request(
+            address,
+            "POST",
+            "/api/preview",
+            "Content-Type: application/json\r\n",
+            body
+        )
+        .starts_with("HTTP/1.1 403")
+    );
+    let preview = request(address, "POST", "/api/preview", &headers, body);
+    assert!(preview.starts_with("HTTP/1.1 200"), "{preview}");
+    let preview: serde_json::Value =
+        serde_json::from_str(preview.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+    assert_eq!(fs::read(asset.join("image.png")).unwrap(), original);
+    let reviewed = json!({"resource":0,"candidate":0,"approve_lossy":false,"plan_token":preview["plan_token"]}).to_string();
+    let result = request(address, "POST", "/api/apply", &headers, &reviewed);
     assert!(result.starts_with("HTTP/1.1 200"), "{result}");
     assert_eq!(fs::read(asset.join("image.png")).unwrap(), optimized);
     let result = request(

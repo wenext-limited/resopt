@@ -34,9 +34,30 @@ struct Transaction {
     resource: usize,
     candidate: usize,
     changes: Vec<Change>,
+    #[serde(default)]
+    references: Option<crate::references::ReferenceContext>,
 }
 
-type FileEdit = (PathBuf, Option<Vec<u8>>, Option<Vec<u8>>);
+type FileEdit = crate::references::Edit;
+struct Prepared {
+    edits: Vec<FileEdit>,
+    references: Option<crate::references::ReferenceContext>,
+}
+impl Prepared {
+    fn token(&self, resource: usize, candidate: usize) -> Result<String> {
+        let edits: Vec<_> = self
+            .edits
+            .iter()
+            .map(|(p, b, a)| (p, b.as_deref().map(hash), a.as_deref().map(hash)))
+            .collect();
+        Ok(hash(&serde_json::to_vec(&(
+            resource,
+            candidate,
+            &edits,
+            &self.references,
+        ))?))
+    }
+}
 
 struct Lock(PathBuf);
 impl Drop for Lock {
@@ -122,8 +143,12 @@ impl Review {
         serde_json::Value::Object(states)
     }
 
-    pub fn apply(&self, index: usize, candidate_index: usize, approve_lossy: bool) -> Result<()> {
-        let _lock = self.lock()?;
+    fn prepare(
+        &self,
+        index: usize,
+        candidate_index: usize,
+        approve_lossy: bool,
+    ) -> Result<Prepared> {
         let resource = self.source(index)?;
         let candidate = resource
             .candidates
@@ -208,6 +233,7 @@ impl Review {
             rel.clone()
         };
         let mut edits: Vec<FileEdit> = vec![];
+        let mut references = None;
         // Re-read catalog rules now, including AppIcon and cap-inset exclusions.
         let in_catalog = rel.components().any(|p| {
             Path::new(p.as_os_str())
@@ -215,7 +241,12 @@ impl Review {
                 .is_some_and(|e| e == "xcassets")
         });
         if in_catalog {
-            let inventory = crate::catalog::scan(&self.report.root)?;
+            let inventory = crate::catalog::scan_with_options(
+                &self.report.root,
+                crate::ScanOptions {
+                    include_ignored: true,
+                },
+            )?;
             let asset = inventory
                 .assets
                 .iter()
@@ -261,11 +292,17 @@ impl Review {
                     Some(serde_json::to_vec_pretty(&json)?),
                 ));
             }
-        } else {
-            ensure!(
-                !crossing,
-                "loose-file format conversion needs reference migration; use a same-format candidate"
-            );
+        } else if crossing {
+            let (reference_edits, context) = crate::references::plan(
+                &self.report.root,
+                rel,
+                &target,
+                crate::ScanOptions {
+                    include_ignored: self.report.options.include_ignored,
+                },
+            )?;
+            edits.extend(reference_edits);
+            references = Some(context);
         }
         if target != *rel {
             ensure!(
@@ -276,6 +313,55 @@ impl Review {
             edits.push((rel.clone(), Some(original), None));
         } else {
             edits.insert(0, (rel.clone(), Some(original), Some(optimized)));
+        }
+        Ok(Prepared { edits, references })
+    }
+
+    pub fn preview(&self, index: usize, candidate: usize) -> Result<serde_json::Value> {
+        let prepared = self.prepare(index, candidate, true)?;
+        let r = self.source(index)?;
+        let c = &r.candidates[candidate];
+        let target = if c.format != r.resource.format || r.resource.extension_mismatch {
+            r.resource.path.with_extension(&c.format)
+        } else {
+            r.resource.path.clone()
+        };
+        let references: Vec<_> = prepared
+            .edits
+            .iter()
+            .filter(|(path, _, _)| path != &r.resource.path && path != &target)
+            .map(|(path, _, _)| path)
+            .collect();
+        Ok(
+            serde_json::json!({"plan_token":prepared.token(index,candidate)?,"source":r.resource.path,"target":target,"reference_files":references,"loose_conversion":prepared.references.is_some()}),
+        )
+    }
+
+    #[cfg(test)]
+    pub fn apply(&self, index: usize, candidate: usize, approve_lossy: bool) -> Result<()> {
+        self.apply_reviewed(index, candidate, approve_lossy, None)
+    }
+
+    pub fn apply_reviewed(
+        &self,
+        index: usize,
+        candidate_index: usize,
+        approve_lossy: bool,
+        token: Option<&str>,
+    ) -> Result<()> {
+        let _lock = self.lock()?;
+        let prepared = self.prepare(index, candidate_index, approve_lossy)?;
+        if prepared.references.is_some() {
+            ensure!(
+                token.is_some(),
+                "preview and confirm the reference migration first"
+            );
+        }
+        if let Some(token) = token {
+            ensure!(
+                token == prepared.token(index, candidate_index)?,
+                "files changed after preview; review the migration again"
+            );
         }
         let directory = self.operation(index)?;
         if fs::symlink_metadata(directory.join("transaction.json")).is_ok() {
@@ -290,13 +376,14 @@ impl Review {
             &Path::new("operations").join(index.to_string()),
         )?;
         let mut transaction = Transaction {
-            schema_version: 1,
+            schema_version: 2,
             root: self.report.root.clone(),
             resource: index,
             candidate: candidate_index,
             changes: vec![],
+            references: prepared.references,
         };
-        for (path, before, after) in edits {
+        for (path, before, after) in prepared.edits {
             let save = |data: Option<Vec<u8>>| -> Result<Option<String>> {
                 data.map(|bytes| {
                     let digest = hash(&bytes);
@@ -360,7 +447,7 @@ impl Review {
         let t: Transaction =
             serde_json::from_slice(&bounded_read(&contained_file(&self.directory, &relative)?)?)?;
         ensure!(
-            t.schema_version == 1 && t.root == self.report.root && t.resource == index,
+            matches!(t.schema_version, 1 | 2) && t.root == self.report.root && t.resource == index,
             "invalid transaction"
         );
         let r = self.source(index)?;
@@ -372,16 +459,48 @@ impl Review {
         let target = source.with_extension(&c.format);
         let contents = source.parent().context("no parent")?.join("Contents.json");
         ensure!(
-            !t.changes.is_empty() && t.changes.len() <= 3,
+            !t.changes.is_empty()
+                && t.changes.len() <= if t.references.is_some() { 1002 } else { 3 },
             "invalid transaction size"
         );
         let mut seen = std::collections::BTreeSet::new();
         for change in &t.changes {
             ensure!(seen.insert(&change.path), "duplicate transaction path");
-            ensure!(
-                change.path == *source || change.path == target || change.path == contents,
-                "unexpected transaction path"
-            );
+            if change.path != *source && change.path != target && change.path != contents {
+                let context = t
+                    .references
+                    .as_ref()
+                    .context("unexpected transaction path")?;
+                ensure!(
+                    t.schema_version == 2,
+                    "references require transaction schema 2"
+                );
+                let before = blob(
+                    &directory,
+                    change
+                        .before
+                        .as_deref()
+                        .context("missing reference original")?,
+                )?;
+                let after = blob(
+                    &directory,
+                    change
+                        .after
+                        .as_deref()
+                        .context("missing reference candidate")?,
+                )?;
+                let expected = crate::references::rewrite(
+                    &change.path,
+                    std::str::from_utf8(&before)?,
+                    source,
+                    &target,
+                    context,
+                )?;
+                ensure!(
+                    expected.as_bytes() == after,
+                    "reference backup is not an exact migration"
+                );
+            }
             for digest in [&change.before, &change.after].into_iter().flatten() {
                 blob(&directory, digest)?;
             }
@@ -725,5 +844,101 @@ mod tests {
         review.restore(0).unwrap();
         assert_eq!(fs::read(dir.join("Contents.json")).unwrap(), contents);
         assert_eq!(fs::read(dir.join("second.png")).unwrap(), original);
+    }
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn loose_cross_format_migrates_references_and_restores_them_after_restart() {
+        for format in ["jpeg", "heic"] {
+            let (root, out, review, original) = fixture(format, false);
+            let swift = r#"let image = UIImage(named: "picture"); let u = Bundle.main.url(forResource: "picture", withExtension: "png")"#;
+            let config = r#"{"image":"picture.png"}"#;
+            let pbx = r#"AAAAAAAAAAAAAAAAAAAAAAAA = {isa = PBXFileReference; lastKnownFileType = image.png; path = picture.png; sourceTree = "<group>"; };"#;
+            fs::write(root.path().join("View.swift"), swift).unwrap();
+            fs::write(root.path().join("config.json"), config).unwrap();
+            fs::create_dir(root.path().join("App.xcodeproj")).unwrap();
+            fs::write(root.path().join("App.xcodeproj/project.pbxproj"), pbx).unwrap();
+            fs::write(root.path().join(".gitignore"), "ignored.json\n").unwrap();
+            fs::write(root.path().join("ignored.json"), config).unwrap();
+            let preview = review.preview(0, 0).unwrap();
+            assert_eq!(preview["reference_files"].as_array().unwrap().len(), 3);
+            assert_eq!(
+                preview["plan_token"],
+                review.preview(0, 0).unwrap()["plan_token"]
+            );
+            assert!(review.apply(0, 0, true).is_err());
+            review
+                .apply_reviewed(0, 0, true, preview["plan_token"].as_str())
+                .unwrap();
+            assert!(!root.path().join("picture.png").exists());
+            assert!(root.path().join(format!("picture.{format}")).exists());
+            assert!(
+                fs::read_to_string(root.path().join("View.swift"))
+                    .unwrap()
+                    .contains(&format!("picture.{format}"))
+            );
+            assert!(
+                fs::read_to_string(root.path().join("App.xcodeproj/project.pbxproj"))
+                    .unwrap()
+                    .contains(&format!("image.{format}"))
+            );
+            assert_eq!(
+                fs::read_to_string(root.path().join("ignored.json")).unwrap(),
+                config
+            );
+            let reopened = Review::open(out.path()).unwrap();
+            reopened.restore(0).unwrap();
+            assert_eq!(fs::read(root.path().join("picture.png")).unwrap(), original);
+            assert_eq!(
+                fs::read_to_string(root.path().join("View.swift")).unwrap(),
+                swift
+            );
+            assert_eq!(
+                fs::read_to_string(root.path().join("App.xcodeproj/project.pbxproj")).unwrap(),
+                pbx
+            );
+            assert_eq!(
+                fs::read_to_string(root.path().join("config.json")).unwrap(),
+                config
+            );
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn changed_reference_plan_and_later_edits_are_never_overwritten() {
+        let (root, _out, review, original) = fixture("heic", false);
+        let path = root.path().join("config.json");
+        fs::write(&path, r#"{"image":"picture.png"}"#).unwrap();
+        let preview = review.preview(0, 0).unwrap();
+        fs::write(&path, r#"{"image":"picture.png","new":true}"#).unwrap();
+        assert!(
+            review
+                .apply_reviewed(0, 0, true, preview["plan_token"].as_str())
+                .is_err()
+        );
+        assert_eq!(fs::read(root.path().join("picture.png")).unwrap(), original);
+        let preview = review.preview(0, 0).unwrap();
+        review
+            .apply_reviewed(0, 0, true, preview["plan_token"].as_str())
+            .unwrap();
+        let applied = fs::read(&path).unwrap();
+        fs::write(&path, b"later user edits").unwrap();
+        assert!(review.restore(0).is_err());
+        assert_eq!(fs::read(&path).unwrap(), b"later user edits");
+        fs::write(&path, applied).unwrap();
+        review.restore(0).unwrap();
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn loose_conversion_without_references_is_reviewable() {
+        let (root, _out, review, original) = fixture("heic", false);
+        let preview = review.preview(0, 0).unwrap();
+        assert_eq!(preview["reference_files"].as_array().unwrap().len(), 0);
+        review
+            .apply_reviewed(0, 0, true, preview["plan_token"].as_str())
+            .unwrap();
+        review.restore(0).unwrap();
+        assert_eq!(fs::read(root.path().join("picture.png")).unwrap(), original);
     }
 }

@@ -20,6 +20,8 @@ name = "resopt"
 path = "src/main.rs"
 
 [dependencies]
+ignore = "0.4.33"
+regex = "1"
 maud = "0.27"
 tiny_http = "0.12"
 getrandom = "0.4"

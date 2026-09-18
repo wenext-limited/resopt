@@ -61,6 +61,17 @@ resopt scan /path/to/project
 resopt scan /path/to/project --json > inventory.json
 ```
 
+默认遵守根目录、父目录和嵌套 `.gitignore`、`.git/info/exclude` 及 Git 全局忽略规则。
+在 Git 可用且存在索引时，已跟踪的文件仍会纳入扫描（包括强制添加的文件）；普通目录也支持 `.gitignore`。
+隐藏文件不会仅因名称以点开头就被过滤。
+
+```sh
+# 显式包含被 Git 忽略的资源；固定的 VCS／构建缓存排除仍然生效
+resopt scan /path/to/project --include-ignored
+resopt analyze /path/to/project --out /tmp/resopt-all --include-ignored
+resopt plan /path/to/project --out /tmp/resopt-plan --include-ignored
+```
+
 扫描范围包括：
 
 - `.xcassets` 引用的资源、目录元数据、未引用文件和暂不支持的资源节点中的文件。
@@ -162,11 +173,19 @@ resopt serve /tmp/resopt-analysis --port 8417
 
 - 支持无损 PNG、JPEG／HEIC 候选。Asset Catalog 跨格式替换会更新所有匹配的
   `Contents.json` rendition 文件名，保留其它字段；恢复时还原原始 JSON 字节。
-- 散落图片仅支持同格式替换；需要改扩展名的候选暂不应用，因为代码、工程文件或运行时可能引用原文件名。
+- 散落图片也支持 PNG／JPEG／HEIC 之间的有效候选转换。点击优化会先预览新文件名和引用文件清单，
+  确认后将新图片、文件引用和旧图移除一并记录到可恢复事务；预览后文件若有变化，会拒绝应用并要求重新审阅。
+- 自动迁移可解析的静态引用：完整文件名、项目路径／相对路径、常见 Swift `UIImage(named:)`、
+  `Image(...)`、`Bundle.url(forResource:withExtension:)`，以及 Xcode `PBXFileReference` 的路径和文件类型；
+  还支持 JSON／HTML 等文本中的带引号路径、CSS `url(...)`、Markdown 图片链接、XML plist 字符串、
+  Interface Builder 图片属性和简单 YAML 路径值。忽略规则同样用于引用扫描。
+- 重名或多倍率图片导致解析歧义时不会猜测；需要将引用明确化，或成组处理倍率资源。
+  动态拼接、项目外引用、二进制 plist、编码后的路径及第三方解码器兼容性仍需人工复核。
+  这是可审阅的静态引用迁移，不是对运行时所有引用的证明。
 - AppIcon、拉伸图片和多帧图片保留现有限制。候选会再次解码或严格验证 PNG，检查源文件哈希、尺寸、方向和 Alpha。
 - 服务启动时固定候选哈希，拒绝运行期间被替换的候选；服务重新启动后会重新验证所选候选。
 - 原始字节、候选和操作记录保存在报告目录的 `operations/` 中，**需要恢复时请保留整个报告目录**。
-  操作中断后可重启服务恢复；对同一个 `Contents.json` 的多次转换须按后做先恢复的顺序操作。
+  操作中断后可重启服务恢复；对共享引用文件（包括 `Contents.json`）的多次转换须按后做先恢复的顺序操作。
   恢复拒绝覆盖后续人工修改。每个文件原子替换，跨文件操作通过持久记录恢复，并非单个原子事务。
 - 服务只监听 `127.0.0.1`，写入接口检查 Host、Origin 和随机会话令牌，不接受客户端传入的文件路径。
 - 概览体积与图片对比保留分析时的快照；已应用状态单独展示，需要新的整体统计时重新运行 `analyze`。

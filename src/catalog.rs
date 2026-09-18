@@ -32,14 +32,27 @@ pub struct Inventory {
 /// Discover catalogs recursively without following symlinks or build caches.
 /// This inventories disk resources; it does not prove target membership.
 pub fn scan(root: impl AsRef<Path>) -> Result<Inventory> {
+    scan_with_options(root, crate::ScanOptions::default())
+}
+
+pub fn scan_with_options(root: impl AsRef<Path>, options: crate::ScanOptions) -> Result<Inventory> {
     let root = fs::canonicalize(root.as_ref()).context("resolving project root")?;
+    let filter = crate::scan_options::ScanFilter::new(&root, options)?;
+    scan_filtered(&root, &filter)
+}
+
+pub(crate) fn scan_filtered(
+    root: &Path,
+    filter: &crate::scan_options::ScanFilter,
+) -> Result<Inventory> {
+    let root = root.to_path_buf();
     ensure!(root.is_dir(), "scan root must be a directory");
     let mut inventory = Inventory {
         schema_version: 1,
         root: root.clone(),
         catalogs: 0,
         assets: vec![],
-        diagnostics: vec![],
+        diagnostics: filter.diagnostics.clone(),
     };
     let mut walk = WalkDir::new(&root).follow_links(false).into_iter();
     while let Some(entry) = walk.next() {
@@ -50,6 +63,10 @@ pub fn scan(root: impl AsRef<Path>) -> Result<Inventory> {
                 continue;
             }
         };
+        if !filter.allows(entry.path()) {
+            walk.skip_current_dir();
+            continue;
+        }
         if !entry.file_type().is_dir() {
             continue;
         }
@@ -95,6 +112,11 @@ pub fn scan(root: impl AsRef<Path>) -> Result<Inventory> {
     // One filename may serve several renditions. Any exclusion wins.
     let mut unique: BTreeMap<PathBuf, Asset> = BTreeMap::new();
     for asset in inventory.assets.drain(..) {
+        if !filter.allows(&root.join(&asset.path))
+            || !filter.allows(&root.join(&asset.contents_path))
+        {
+            continue;
+        }
         match unique.get(&asset.path) {
             Some(previous) if !previous.eligible => {}
             _ => {

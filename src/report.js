@@ -56,8 +56,6 @@ function preferredCandidate(r) {
 function applicationReason(r, c) {
   if (!c?.valid || !c.artifact) return '请选择通过校验且有体积收益的候选';
   if (r.resource?.conversion_exclusion) return issueLabel(r.resource.conversion_exclusion);
-  const crossing = c.format !== r.resource?.format || r.resource?.extension_mismatch;
-  if (crossing && r.resource?.origin !== 'catalog_rendition') return '跨格式替换需要迁移文件引用；散落图片当前仅支持同格式优化';
   return '';
 }
 async function loadOperationStates() {
@@ -72,11 +70,11 @@ async function loadOperationStates() {
 async function performAction(action) {
   operationBusy = true; operationMessage = '正在校验和写入…'; renderDetail();
   try {
-    const response = await fetch(`/api/${action.kind}`, {method:'POST',headers:{'Content-Type':'application/json','X-Resopt-Token':report.sessionToken},body:JSON.stringify({resource:action.resource,candidate:action.candidate,approve_lossy:action.approveLossy})});
+    const response = await fetch(`/api/${action.kind}`, {method:'POST',headers:{'Content-Type':'application/json','X-Resopt-Token':report.sessionToken},body:JSON.stringify({resource:action.resource,candidate:action.candidate,approve_lossy:action.approveLossy,plan_token:action.planToken})});
     const result = await response.json();
     if (result.states) operationStates = result.states;
     if (!response.ok) throw new Error(result.error || '操作失败');
-    operationMessage = action.kind === 'apply' ? '已优化并保存原图备份。上方对比仍显示分析时的原图。' : '已恢复原图及关联的 Contents.json。';
+    operationMessage = action.kind === 'apply' ? '已优化并保存原图备份。上方对比仍显示分析时的原图。' : '已恢复原图及关联的引用文件。';
   } catch(error) { operationMessage = error.message; }
   finally { operationBusy = false; renderDetail(); }
 }
@@ -90,19 +88,27 @@ function renderActions(pane, r, c) {
   const action = el('button','primary','优化这张图片'); action.type='button';
   const reason = applicationReason(r,c);
   action.disabled = operationBusy || !sessionReady || !!reason || (state && state.state !== 'original');
-  action.addEventListener('click',()=>{
-    pendingAction = {kind:'apply',resource:index,candidate:chosen,approveLossy:!!c.lossy};
-    $('apply-title').textContent = c.lossy ? '确认有损优化' : '确认无损优化';
-    $('apply-confirm').textContent = '确认并应用';
-    $('apply-note').textContent = '原文件会备份，可在页面恢复。请先检查原尺寸候选的画质。';
-    const crossing = c.format !== r.resource.format || r.resource.extension_mismatch;
-    $('apply-description').textContent = `${pathText(r)}\n${candidateLabel(c)}：${formatSize(r.resource.bytes)} → ${formatSize(c.bytes)}，节省 ${formatSize(c.savings_bytes)}。${crossing ? '将改为对应扩展名，并更新 Contents.json。' : '文件名保持不变。'}${c.lossy ? '此操作会有画质损失。' : ''}`;
-    $('apply-dialog').showModal(); $('apply-cancel').focus();
+  action.addEventListener('click',async()=>{
+    const candidateIndex = chosen;
+    operationBusy = true; operationMessage = '正在检查文件引用…'; renderDetail();
+    try {
+      const response = await fetch('/api/preview', {method:'POST',headers:{'Content-Type':'application/json','X-Resopt-Token':report.sessionToken},body:JSON.stringify({resource:index,candidate:candidateIndex})});
+      const plan = await response.json();
+      if (!response.ok) throw new Error(plan.error || '无法生成引用迁移计划');
+      pendingAction = {kind:'apply',resource:index,candidate:candidateIndex,approveLossy:!!c.lossy,planToken:plan.plan_token};
+      $('apply-title').textContent = c.lossy ? '确认有损优化' : '确认无损优化';
+      $('apply-confirm').textContent = '确认并应用';
+      $('apply-note').textContent = plan.loose_conversion ? '将按报告的忽略规则迁移可识别的静态引用。动态拼接、第三方解码器和项目外引用需要你复核；原图和引用文件均会备份。' : '原文件会备份，可在页面恢复。请先检查原尺寸候选的画质。';
+      const references = plan.reference_files || [];
+      $('apply-description').textContent = `${plan.source} → ${plan.target}\n${candidateLabel(c)}：${formatSize(r.resource.bytes)} → ${formatSize(c.bytes)}，节省 ${formatSize(c.savings_bytes)}。${c.lossy ? '此操作会有画质损失。' : ''}\n引用文件（${references.length}）：${references.length ? '\n'+references.join('\n') : '未发现需要修改的静态引用'}`;
+      $('apply-dialog').showModal(); $('apply-cancel').focus(); operationMessage = '';
+    } catch(error) { pendingAction = null; operationMessage = error.message; }
+    finally { operationBusy = false; renderDetail(); }
   });
   block.append(action);
   if(state && state.state !== 'original') {
     const restore = el('button','','恢复原图');restore.type='button';restore.disabled=operationBusy || !sessionReady || state.state==='conflict';
-    restore.addEventListener('click',()=>{ pendingAction={kind:'restore',resource:index};$('apply-title').textContent='确认恢复原图';$('apply-confirm').textContent='确认恢复';$('apply-note').textContent='如同一资源集有较新的转换，请先恢复较新的操作。';$('apply-description').textContent=pathText(r)+'\n恢复优化前的文件及资源引用；后续人工修改不会被覆盖。';$('apply-dialog').showModal();$('apply-cancel').focus(); });block.append(restore);
+    restore.addEventListener('click',()=>{ pendingAction={kind:'restore',resource:index};$('apply-title').textContent='确认恢复原图';$('apply-confirm').textContent='确认恢复';$('apply-note').textContent='如共享引用文件有较新的转换，请先恢复较新的操作。';$('apply-description').textContent=pathText(r)+'\n恢复优化前的文件及资源引用；后续人工修改不会被覆盖。';$('apply-dialog').showModal();$('apply-cancel').focus(); });block.append(restore);
     block.append(el('p','',state.state==='applied'?`已应用：${candidateLabel(r.candidates[state.candidate] || c)} · 可恢复`:state.state==='partial'?'操作未完成，可恢复原图':`文件状态冲突：${state.error || '请先恢复较新的操作'}`));
   } else if(reason) block.append(el('p','',reason));
   if(operationMessage) { const message=el('p','operation-message',operationMessage);message.setAttribute('role','status');block.append(message); }

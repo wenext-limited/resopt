@@ -10,6 +10,7 @@ const MAX_DECODED: usize = 256 * 1024 * 1024;
 #[serde(default, deny_unknown_fields)]
 pub struct Policy {
     pub png_level: u8,
+    pub include_ignored: bool,
     pub min_input_bytes: u64,
     pub min_savings_bytes: u64,
     pub min_savings_percent: f64,
@@ -19,6 +20,7 @@ impl Default for Policy {
     fn default() -> Self {
         Self {
             png_level: 2,
+            include_ignored: false,
             min_input_bytes: 50 * 1024,
             min_savings_bytes: 1024,
             min_savings_percent: 1.0,

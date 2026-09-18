@@ -16,6 +16,8 @@ struct Action {
     candidate: Option<usize>,
     #[serde(default)]
     approve_lossy: bool,
+    #[serde(default)]
+    plan_token: Option<String>,
 }
 
 /// Serve an existing analysis on loopback. Port 0 chooses an available port.
@@ -96,7 +98,10 @@ pub fn serve(directory: impl AsRef<Path>, port: u16) -> Result<()> {
                 serde_json::to_vec(&review.states())?,
             );
         } else if request.method() == &Method::Post
-            && matches!(route.as_str(), "/api/apply" | "/api/restore")
+            && matches!(
+                route.as_str(),
+                "/api/apply" | "/api/restore" | "/api/preview"
+            )
         {
             if header(&request, "Origin") != Some(origin.as_str())
                 || header(&request, "X-Resopt-Token") != Some(token.as_str())
@@ -110,7 +115,7 @@ pub fn serve(directory: impl AsRef<Path>, port: u16) -> Result<()> {
                 );
                 continue;
             }
-            let result = (|| -> Result<()> {
+            let result = (|| -> Result<serde_json::Value> {
                 ensure!(
                     request.body_length().is_some_and(|n| n <= 4096),
                     "request too large or missing content length"
@@ -119,18 +124,26 @@ pub fn serve(directory: impl AsRef<Path>, port: u16) -> Result<()> {
                 request.as_reader().take(4097).read_to_end(&mut body)?;
                 ensure!(body.len() <= 4096, "request too large");
                 let action: Action = serde_json::from_slice(&body)?;
+                if route == "/api/preview" {
+                    return review.preview(
+                        action.resource,
+                        action.candidate.context("missing candidate")?,
+                    );
+                }
                 if route == "/api/apply" {
-                    review.apply(
+                    review.apply_reviewed(
                         action.resource,
                         action.candidate.context("missing candidate")?,
                         action.approve_lossy,
-                    )
+                        action.plan_token.as_deref(),
+                    )?;
                 } else {
-                    review.restore(action.resource)
+                    review.restore(action.resource)?;
                 }
+                Ok(serde_json::json!({"ok":true,"states":review.states()}))
             })();
             let (code, body) = match result {
-                Ok(()) => (200, serde_json::json!({"ok":true,"states":review.states()})),
+                Ok(body) => (200, body),
                 Err(e) => (
                     409,
                     serde_json::json!({"error":format!("{e:#}"),"states":review.states()}),

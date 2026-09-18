@@ -1,6 +1,6 @@
 use crate::{
     Policy,
-    catalog::scan,
+    catalog::scan_with_options,
     filesystem::{contained_file, hash, read_verified, replace, write_new},
     optimizer,
 };
@@ -54,7 +54,12 @@ pub fn create_plan(
     policy: Policy,
 ) -> Result<Plan> {
     policy.validate()?;
-    let inventory = scan(root)?;
+    let inventory = scan_with_options(
+        root,
+        crate::ScanOptions {
+            include_ignored: policy.include_ignored,
+        },
+    )?;
     let directory = directory.as_ref();
     fs::create_dir(directory).with_context(|| {
         format!(
@@ -244,7 +249,12 @@ fn execute(directory: &Path, restoring: bool) -> Result<ApplyReport> {
     write_new(&root_lock_path, format!("pid={}\n", std::process::id()).as_bytes())
         .context("project locked; remove .resopt.lock only after confirming no resopt process is modifying this project")?;
     let _root_lock = Lock(root_lock_path);
-    let inventory = scan(&plan.root)?;
+    let inventory = scan_with_options(
+        &plan.root,
+        crate::ScanOptions {
+            include_ignored: true,
+        },
+    )?;
     let assets: BTreeMap<_, _> = inventory
         .assets
         .into_iter()
