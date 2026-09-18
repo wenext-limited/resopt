@@ -63,11 +63,12 @@ pub(crate) fn scan_filtered(
                 continue;
             }
         };
-        if !filter.allows(entry.path()) {
-            walk.skip_current_dir();
+        if !entry.file_type().is_dir() {
             continue;
         }
-        if !entry.file_type().is_dir() {
+        // Only prune directories: skipping on a file would drop its siblings.
+        if !filter.allows(entry.path()) {
+            walk.skip_current_dir();
             continue;
         }
         if entry.depth() > 0 && excluded(entry.file_name().to_str().unwrap_or("")) {

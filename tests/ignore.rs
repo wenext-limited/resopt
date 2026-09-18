@@ -242,3 +242,27 @@ fn tracked_submodule_assets_are_not_lost_to_ignore_patterns() {
     );
     assert!(paths(&root, false).contains(&"vendor/generated/image.png".into()));
 }
+
+#[test]
+fn an_ignored_file_does_not_hide_sibling_catalogs() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    // `.DS_Store` sorts before the catalog directory; pruning on a file entry
+    // used to skip every later sibling.
+    write(root, ".gitignore", b".DS_Store\n");
+    write(root, ".DS_Store", b"finder");
+    write(
+        root,
+        "App/Assets.xcassets/Contents.json",
+        br#"{"info":{"version":1,"author":"xcode"}}"#,
+    );
+    write(
+        root,
+        "App/Assets.xcassets/Icon.imageset/Contents.json",
+        br#"{"images":[{"filename":"icon.png","idiom":"universal"}],"info":{"version":1,"author":"xcode"}}"#,
+    );
+    write(root, "App/Assets.xcassets/Icon.imageset/icon.png", b"png");
+    let inventory = scan(root).unwrap();
+    assert_eq!(inventory.catalogs, 1);
+    assert_eq!(inventory.assets.len(), 1);
+}
