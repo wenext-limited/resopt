@@ -2,6 +2,8 @@
 
 ## 未发布
 
+- 新增 macOS 原生网页托管与 JPEG / HEIC 编码接口；支持项目目录拖拽、嵌套 `.gitignore`、批量收益摘要和保留目录的候选 ZIP 下载。
+
 - 新增浏览器版：复用 Rust 核心，通过 WASM 在本机无损优化静态 PNG、校验像素并计算 SSIMULACRA2；支持明暗主题、暂停恢复及 ZIP 下载。
 - 使用 Bun + TypeScript + Web Worker 构建网页，Maud 生成 HTML；新增独立浏览器构建与 WASM 回归测试 CI。
 

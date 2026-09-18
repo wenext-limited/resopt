@@ -488,3 +488,10 @@ void engine
   .catch((error) => {
     say(`图像引擎加载失败：${error.message}。请刷新重试。`);
   });
+
+void fetch("./api/capabilities")
+  .then((r) => (r.ok ? r.json() : null))
+  .then((c) => {
+    if (c?.native) $("native-link").hidden = false;
+  })
+  .catch(() => {});

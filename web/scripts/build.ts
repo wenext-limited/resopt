@@ -6,6 +6,7 @@ await rm(outdir, { recursive: true, force: true });
 await mkdir(outdir, { recursive: true });
 for (const [entry, naming] of [
   [join(web, "generated/index.html"), "[name]-[hash].[ext]"],
+  [join(web, "generated/native.html"), "[name]-[hash].[ext]"],
   [join(web, "src/worker.ts"), "[name].[ext]"],
 ] as const) {
   const result = await Bun.build({
@@ -18,8 +19,14 @@ for (const [entry, naming] of [
   if (!result.success)
     throw new AggregateError(result.logs, "Browser build failed");
   const html = result.outputs.find((o) => o.path.endsWith(".html"));
-  if (html && !html.path.endsWith("/index.html")) {
-    await Bun.write(join(outdir, "index.html"), html);
+  if (html) {
+    await Bun.write(
+      join(
+        outdir,
+        entry.endsWith("native.html") ? "native.html" : "index.html",
+      ),
+      html,
+    );
     await rm(html.path);
   }
 }

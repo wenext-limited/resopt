@@ -85,3 +85,17 @@ await Bun.write(join(generated, "index.html"), html);
 console.log(
   `Generated browser engine and Maud HTML in ${dirname(join(generated, "index.html"))}`,
 );
+
+const nativeHtml = await output([
+  "cargo",
+  "run",
+  "--quiet",
+  "--locked",
+  "-p",
+  "resopt-wasm",
+  "--example",
+  "web_shell",
+  "--",
+  "--native",
+]);
+await Bun.write(join(generated, "native.html"), nativeHtml);

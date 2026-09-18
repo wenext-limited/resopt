@@ -86,6 +86,39 @@ WASM 的 C 符号；也可通过 `AR_wasm32_unknown_unknown`、`WASM_BINDGEN` �
 `CARGO_TARGET_DIR` 指定已有工具。PNG 的 OxiPNG 后端在 WASM 上启用 `freestanding`，
 关闭原生线程与 `std::time::Instant` 超时，原生 CLI 保留原有设置。
 
+## macOS 网页服务与项目批量分析
+
+`/native.html` 支持拖入整个项目或选择目录，递归收集 PNG / JPEG / HEIC，默认遵守各级
+`.gitignore`。浏览器本地筛选，只在点击「上传并分析」后逐张上传图片，不上传源码。
+支持最小候选（可能有损）、PNG 无损、JPEG、HEIC，以及 75 / 85 / 95 质量档位。
+列表按实际收益排序，汇总全批次节省；可暂停在当前图片结束后继续，或下载保留目录结构的
+候选 ZIP 和 `report.json`。重复目标文件名会编号，避免跨格式候选互相覆盖。
+
+限制：最多读取 50,000 个文件、分析 5,000 张图片；每张 16 MiB / 4,194,304 像素；
+结果缓存 128 MiB，超限暂停。忽略规则来自所选目录内的 `.gitignore`，不读取目录外的
+全局 Git 配置或 `.git/info/exclude`，也不会读取 Git 索引来区分已跟踪文件。请选择项目根目录。
+仅处理静态图片；JPEG 遇到透明像素会拒绝，HEIC 仍须通过 Alpha 误差校验。
+
+**下载结果是候选，不会改写本地项目或迁移引用。** 跨格式应用仍需原生 CLI 的审核流程，
+不要直接把 ZIP 覆盖到工程中。网页的 PNG 浏览器模式继续完全离线处理。
+
+在 macOS 上构建并运行（Bun 原生进程，无需 Docker）：
+
+```sh
+cargo build --locked --release --bin resopt
+cd web
+bun install --frozen-lockfile
+bun run build
+HOST=127.0.0.1 PORT=8432 RESOPT_BIN="$(pwd)/../target/release/resopt" bun run host
+```
+
+需要内网访问时，把 `HOST` 改成服务器的内网 IP；`PUBLIC_ORIGIN` 可显式指定访问源
+（例如 `http://10.86.10.42:8432`）。此服务面向可信内网，不带账户系统。
+服务只提供站点文件及单图转换接口，不暴露已有项目目录或原生 `apply`。
+转换通过独立临时目录调用 resopt，结束后删除临时文件；单次最多处理一张，超时 90 秒。
+后台运行建议使用 macOS LaunchAgent 管理 Bun，并设置 `SITE_DIR`、`RESOPT_BIN` 的绝对路径。
+原生集成验证：`RESOPT_TEST_BIN=/absolute/path/to/resopt bun test tests/native-integration.test.ts`。
+
 ## 安装
 
 crates.io 包名为 **`resopt-cli`**，安装后的命令仍是 **`resopt`**：

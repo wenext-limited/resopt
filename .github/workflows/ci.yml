@@ -26,6 +26,20 @@ jobs:
       - run: cargo clippy --locked --workspace --all-targets -- -D warnings
       - run: cargo test --locked --workspace --all-targets
       - run: cargo test --locked --workspace --doc
+      - uses: oven-sh/setup-bun@v2
+        if: runner.os == 'macOS'
+        with:
+          bun-version: '1.3.14'
+      - run: bun install --frozen-lockfile
+        if: runner.os == 'macOS'
+        working-directory: web
+      - run: cargo build --locked --bin resopt
+        if: runner.os == 'macOS'
+      - run: bun test tests/native-integration.test.ts
+        if: runner.os == 'macOS'
+        working-directory: web
+        env:
+          RESOPT_TEST_BIN: ${{ github.workspace }}/target/debug/resopt
 
   browser:
     runs-on: ubuntu-latest
