@@ -277,6 +277,7 @@ fn animated_png_is_inspected_without_flattening() {
     );
 }
 
+#[cfg(target_os = "macos")]
 fn flat_png(width: u32, height: u32) -> Vec<u8> {
     let mut bytes = Vec::new();
     {
