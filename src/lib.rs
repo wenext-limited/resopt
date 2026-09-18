@@ -60,3 +60,6 @@ pub mod portable;
 mod web;
 #[cfg(feature = "native")]
 pub use web::{WebOptions, web};
+
+#[cfg(feature = "native")]
+mod webp_backend;

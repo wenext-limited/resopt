@@ -1,5 +1,5 @@
 use crate::image_backend::Decoded;
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, ensure};
 use fast_ssim2::{LinearRgbImage, compute_ssimulacra2, compute_ssimulacra2_strip, srgb_to_linear};
 
 /// Backdrops for alpha-aware scoring: black, white and mid-gray in sRGB.
@@ -11,6 +11,14 @@ const STRIP_HEIGHT: u32 = 256;
 /// Worst SSIMULACRA2 score across the backdrops (100 = identical, 90+ is
 /// usually imperceptible). Opaque pairs are scored once.
 pub(crate) fn ssimulacra2(original: &Decoded, candidate: &Decoded) -> Result<f64> {
+    ensure!(
+        original.info.width == candidate.info.width
+            && original.info.height == candidate.info.height,
+        "dimensions_changed"
+    );
+    if original.pixels == candidate.pixels {
+        return Ok(100.0);
+    }
     let opaque = !original.info.has_transparent_pixels && !candidate.info.has_transparent_pixels;
     let backdrops = if opaque {
         &BACKDROPS[..1]
@@ -30,6 +38,59 @@ pub(crate) fn ssimulacra2(original: &Decoded, candidate: &Decoded) -> Result<f64
         worst = worst.min(score);
     }
     Ok(worst)
+}
+
+/// Reuse the source pyramid across quality/format trials of one image.
+/// Cap retained pyramids to about 96 MiB per worker, keeping large images on strips.
+#[cfg(feature = "native")]
+pub(crate) struct ReferenceScorer<'a> {
+    original: &'a Decoded,
+    references: [Option<fast_ssim2::Ssimulacra2Reference>; 3],
+}
+#[cfg(feature = "native")]
+impl<'a> ReferenceScorer<'a> {
+    pub fn new(original: &'a Decoded) -> Self {
+        Self {
+            original,
+            references: [None, None, None],
+        }
+    }
+    pub fn score(&mut self, candidate: &Decoded) -> Result<f64> {
+        let original = self.original;
+        ensure!(
+            original.info.width == candidate.info.width
+                && original.info.height == candidate.info.height,
+            "dimensions_changed"
+        );
+        if original.pixels == candidate.pixels {
+            return Ok(100.0);
+        }
+        let count = if original.info.has_transparent_pixels || candidate.info.has_transparent_pixels
+        {
+            3
+        } else {
+            1
+        };
+        if original.info.width * original.info.height * count > 2 * 1024 * 1024 {
+            return ssimulacra2(original, candidate);
+        }
+        let mut worst = f64::INFINITY;
+        for (index, backdrop) in BACKDROPS.iter().enumerate().take(count) {
+            if self.references[index].is_none() {
+                self.references[index] = Some(
+                    fast_ssim2::Ssimulacra2Reference::new(composite(original, *backdrop)?)
+                        .context("ssimulacra2_reference_failed")?,
+                );
+            }
+            let score = self.references[index]
+                .as_ref()
+                .unwrap()
+                .compare(composite(candidate, *backdrop)?)
+                .context("ssimulacra2_failed")?;
+            worst = worst.min(score);
+        }
+        Ok(worst)
+    }
 }
 
 /// Premultiplied sRGB over a solid backdrop, converted to linear light.
@@ -103,6 +164,27 @@ mod tests {
     fn identical_images_score_100() {
         let score = ssimulacra2(&image(gradient), &image(gradient)).unwrap();
         assert!((score - 100.0).abs() < 0.01, "{score}");
+    }
+
+    #[cfg(feature = "native")]
+    #[test]
+    fn cached_reference_matches_one_shot_for_repeated_alpha_and_rgb_trials() {
+        for alpha in [1.0, 0.5] {
+            let original = image(|x, y| {
+                let [r, g, b, _] = gradient(x, y);
+                [r * alpha, g * alpha, b * alpha, alpha]
+            });
+            let mut scorer = ReferenceScorer::new(&original);
+            for delta in [0.0, 0.02, 0.1] {
+                let changed = image(|x, y| {
+                    let [r, g, b, _] = gradient(x, y);
+                    [(r + delta).min(1.0) * alpha, g * alpha, b * alpha, alpha]
+                });
+                let expected = ssimulacra2(&original, &changed).unwrap();
+                let actual = scorer.score(&changed).unwrap();
+                assert!((expected - actual).abs() < 0.001, "{expected} vs {actual}");
+            }
+        }
     }
 
     #[test]

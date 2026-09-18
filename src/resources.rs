@@ -153,11 +153,21 @@ pub fn inventory_with_options(
             "loose_file"
         }
         .to_string();
-        let conversion_exclusion = if relative.components().any(|p| {
-            Path::new(p.as_os_str())
-                .extension()
-                .is_some_and(|e| e == "appiconset")
-        }) {
+        let conversion_exclusion = if relative
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().ends_with(".9.png"))
+        {
+            Some("android_nine_patch".into())
+        } else if (android_resource_path(&relative)
+            && relative
+                .components()
+                .any(|p| p.as_os_str().to_string_lossy().starts_with("mipmap")))
+            || relative.components().any(|p| {
+                Path::new(p.as_os_str())
+                    .extension()
+                    .is_some_and(|e| e == "appiconset")
+            })
+        {
             Some("app_icon".into())
         } else {
             referenced
@@ -311,4 +321,18 @@ pub(crate) fn bounded_read(path: &Path) -> Result<Vec<u8>> {
         .read_to_end(&mut bytes)?;
     ensure!(bytes.len() <= 64 * 1024 * 1024, "input_exceeds_64_mib");
     Ok(bytes)
+}
+
+/// Android resource paths carry build-time qualifier and resource-ID semantics.
+pub(crate) fn android_resource_path(path: &Path) -> bool {
+    let names: Vec<_> = path
+        .components()
+        .map(|p| p.as_os_str().to_string_lossy())
+        .collect();
+    names.windows(2).any(|p| {
+        p[0] == "res"
+            && ["drawable", "mipmap", "raw"]
+                .iter()
+                .any(|kind| p[1] == *kind || p[1].starts_with(&format!("{kind}-")))
+    })
 }

@@ -27,3 +27,17 @@ test('artifact links cannot navigate to external or parent locations', () => {
   assert.equal(api.assetUrl('previews/a.png'), 'previews/a.png');
   assert.equal(api.assetUrl('previews/图 1.png'), `previews/${encodeURIComponent('图 1.png')}`);
 });
+
+test('Alpha override is restricted to explicit visual warnings', () => {
+  const start = script.indexOf('function alphaWarning');
+  const end = script.indexOf('async function loadOperationStates', start);
+  const policy = vm.runInNewContext(`${script.slice(start,end)}; ({alphaWarning, applicationReason})`);
+  assert.equal(policy.alphaWarning({lossy:true,rejection:'alpha_error_exceeds_policy'}), true);
+  assert.equal(policy.alphaWarning({lossy:true,rejection:'source_changed_during_analysis'}), false);
+  assert.equal(policy.alphaWarning({lossy:false,rejection:'alpha_error_exceeds_policy'}), false);
+  assert.equal(policy.applicationReason({resource:{}},{lossy:true,valid:false,rejection:'alpha_error_exceeds_policy',artifact:'candidates/a.webp'}), '');
+  assert.notEqual(policy.applicationReason({resource:{}},{lossy:true,valid:false,rejection:'dimensions_changed',artifact:'candidates/a.webp'}), '');
+});
+test('the incremental progress script parses', () => {
+  assert.doesNotThrow(() => new vm.Script(fs.readFileSync(path.join(__dirname,'../src/progress.js'),'utf8')));
+});

@@ -32,6 +32,8 @@ pub struct AnalysisOptions {
     pub png_level: u8,
     /// Allow lossless PNG color-type, bit-depth and palette reductions.
     pub png_reductions: bool,
+    /// Include lossy WebP candidates for loose image files.
+    pub webp: bool,
 }
 impl Default for AnalysisOptions {
     fn default() -> Self {
@@ -46,6 +48,7 @@ impl Default for AnalysisOptions {
             max_pixels: image_backend::DEFAULT_MAX_PIXELS,
             png_level: Policy::default().png_level,
             png_reductions: false,
+            webp: false,
         }
     }
 }
@@ -143,6 +146,15 @@ pub fn analyze_with_progress(
     options: AnalysisOptions,
     progress: impl Fn(usize, usize) + Sync,
 ) -> Result<AnalysisReport> {
+    analyze_with_observer(root, out, options, |_, done, total| progress(done, total))
+}
+
+pub(crate) fn analyze_with_observer(
+    root: impl AsRef<Path>,
+    out: impl AsRef<Path>,
+    options: AnalysisOptions,
+    progress: impl Fn(&ResourceAnalysis, usize, usize) + Sync,
+) -> Result<AnalysisReport> {
     options.validate()?;
     if !options.probe_only && image_backend::image_backend_available() {
         image_backend::check_encoders()?;
@@ -172,24 +184,100 @@ pub fn analyze_with_progress(
         .num_threads(options.jobs)
         .build()?;
     let complete = AtomicUsize::new(0);
-    let resources = pool.install(|| {
-        inventory
-            .assets
-            .par_iter()
-            .enumerate()
-            .map(|(index, resource)| {
-                #[cfg(target_os = "macos")]
-                let result = objc2::rc::autoreleasepool(|_| {
-                    analyze_resource(resource, index, &inventory.root, &out, &options)
+    // Group byte-identical eligible images before encoding. Hashes are checked
+    // again at reuse time; filenames and project metadata remain per-resource.
+    let mut groups: Vec<(Option<String>, Vec<usize>)> = Vec::new();
+    let mut by_hash = BTreeMap::<(String, String, bool, bool), usize>::new();
+    for (index, resource) in inventory.assets.iter().enumerate() {
+        let fingerprint = if resource.kind == "image"
+            && resource.conversion_exclusion.is_none()
+            && !options.probe_only
+        {
+            contained_file(&inventory.root, &resource.path)
+                .and_then(|p| bounded_read(&p))
+                .ok()
+                .map(|bytes| hash(&bytes))
+        } else {
+            None
+        };
+        if let Some(fingerprint) = &fingerprint {
+            let catalog = resource.origin == "catalog_rendition"
+                || resource.path.components().any(|p| {
+                    Path::new(p.as_os_str())
+                        .extension()
+                        .is_some_and(|e| e == "xcassets")
                 });
-                #[cfg(not(target_os = "macos"))]
-                let result = analyze_resource(resource, index, &inventory.root, &out, &options);
-                let done = complete.fetch_add(1, Ordering::Relaxed) + 1;
-                progress(done, inventory.assets.len());
-                result
+            let key = (
+                resource.format.clone(),
+                fingerprint.clone(),
+                catalog,
+                crate::resources::android_resource_path(&resource.path),
+            );
+            if let Some(&group) = by_hash.get(&key) {
+                groups[group].1.push(index);
+                continue;
+            }
+            by_hash.insert(key, groups.len());
+        }
+        groups.push((fingerprint, vec![index]));
+    }
+    let mut indexed = pool.install(|| {
+        groups
+            .par_iter()
+            .flat_map_iter(|(fingerprint, indices)| {
+                let analyze_one = |index: usize| {
+                    #[cfg(target_os = "macos")]
+                    {
+                        objc2::rc::autoreleasepool(|_| {
+                            analyze_resource(
+                                &inventory.assets[index],
+                                index,
+                                &inventory.root,
+                                &out,
+                                &options,
+                            )
+                        })
+                    }
+                    #[cfg(not(target_os = "macos"))]
+                    {
+                        analyze_resource(
+                            &inventory.assets[index],
+                            index,
+                            &inventory.root,
+                            &out,
+                            &options,
+                        )
+                    }
+                };
+                let first = analyze_one(indices[0]);
+                indices
+                    .iter()
+                    .map(|&index| {
+                        let resource = &inventory.assets[index];
+                        let reusable = index == indices[0]
+                            || (first.status != "failed"
+                                && fingerprint.is_some()
+                                && first.sha256 == *fingerprint
+                                && contained_file(&inventory.root, &resource.path)
+                                    .and_then(|p| bounded_read(&p))
+                                    .is_ok_and(|bytes| Some(hash(&bytes)) == *fingerprint));
+                        let result = if reusable {
+                            let mut result = first.clone();
+                            result.resource = resource.clone();
+                            result
+                        } else {
+                            analyze_one(index)
+                        };
+                        let done = complete.fetch_add(1, Ordering::Relaxed) + 1;
+                        progress(&result, done, inventory.assets.len());
+                        (index, result)
+                    })
+                    .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>()
     });
+    indexed.sort_by_key(|(index, _)| *index);
+    let resources: Vec<_> = indexed.into_iter().map(|(_, result)| result).collect();
     let mut status_counts = BTreeMap::new();
     let mut savings = 0;
     for resource in &resources {
@@ -271,7 +359,8 @@ fn analyze_resource(
             result.issues.push("below_explicit_input_threshold".into());
             return Ok(());
         }
-        let targets = if !image_backend::image_backend_available() {
+        let android = crate::resources::android_resource_path(&resource.path);
+        let targets = if android || !image_backend::image_backend_available() {
             vec![]
         } else if decoded.info.has_transparent_pixels {
             vec!["heic"]
@@ -287,9 +376,20 @@ fn analyze_resource(
                     .map(move |quality| (*format, Some(*quality)))
             })
             .collect();
+        if options.webp
+            && resource.origin != "catalog_rendition"
+            && !resource.path.components().any(|p| {
+                Path::new(p.as_os_str())
+                    .extension()
+                    .is_some_and(|e| e == "xcassets")
+            })
+        {
+            trials.extend(options.qualities.iter().map(|q| ("webp", Some(*q))));
+        }
         if resource.format == "png" {
             trials.insert(0, ("png", None));
         }
+        let mut scorer = crate::quality::ReferenceScorer::new(&decoded);
         for (format, quality) in trials {
             let mut trial = ImageCandidate {
                 format: format.into(),
@@ -304,6 +404,9 @@ fn analyze_resource(
                 preview: None,
             };
             let encoded = match quality {
+                Some(quality) if format == "webp" => {
+                    crate::webp_backend::encode(&original, &decoded, quality)
+                }
                 Some(quality) => image_backend::encode(&original, format, quality),
                 None => optimizer::optimize(&original, &options.png_policy()),
             };
@@ -312,17 +415,19 @@ fn analyze_resource(
                 trial.bytes = bytes.len() as u64;
                 trial.savings_bytes = (original.len() as u64).saturating_sub(trial.bytes);
                 let candidate = image_backend::decode(&bytes, options.max_pixels)?;
-                let difference = image_backend::compare(&decoded, &candidate)?;
+                let difference =
+                    image_backend::compare_with(&decoded, &candidate, || scorer.score(&candidate))?;
                 trial.difference = Some(difference.clone());
-                ensure!(
-                    difference.max_alpha_error <= options.max_alpha_error,
-                    "alpha_error_exceeds_policy"
-                );
-                ensure!(
-                    decoded.info.has_transparent_pixels == candidate.info.has_transparent_pixels,
-                    "transparency_presence_changed"
-                );
-                trial.valid = true;
+                trial.rejection = if difference.max_alpha_error > options.max_alpha_error {
+                    Some("alpha_error_exceeds_policy".into())
+                } else if decoded.info.has_transparent_pixels
+                    != candidate.info.has_transparent_pixels
+                {
+                    Some("transparency_presence_changed".into())
+                } else {
+                    None
+                };
+                trial.valid = trial.rejection.is_none();
                 if trial.savings_bytes >= options.min_savings_bytes
                     && trial.bytes < original.len() as u64
                 {
@@ -349,7 +454,7 @@ fn analyze_resource(
             .filter(|(_, candidate)| candidate.valid && candidate.artifact.is_some())
             .min_by_key(|(_, candidate)| candidate.bytes)
             .map(|(index, _)| index);
-        if result.smallest_candidate.is_some() {
+        if result.candidates.iter().any(|c| c.artifact.is_some()) {
             let preview = PathBuf::from(format!("previews/{index}-original.png"));
             write_new(&out.join(&preview), &image_backend::preview(&decoded)?)?;
             result.original_preview = Some(preview);

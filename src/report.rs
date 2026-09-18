@@ -144,7 +144,7 @@ fn toolbar() -> Markup {
     html! {
         section.toolbar aria-label="筛选资源" {
             div.modes role="group" aria-label="资源范围" {
-                @for (mode, label) in [("candidates", "有候选"), ("images", "图片"), ("all", "全部")] {
+                @for (mode, label) in [("candidates", "有候选"), ("warnings", "有警告"), ("images", "图片"), ("all", "全部")] {
                     button class={ "mode" @if mode == "candidates" { " active" } } data-mode=(mode) aria-pressed=(if mode == "candidates" { "true" } else { "false" }) {
                         (label) " " span id={ "mode-" (mode) } {}
                     }

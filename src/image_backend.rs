@@ -40,6 +40,15 @@ pub struct ImageDifference {
 
 #[cfg(feature = "native")]
 pub(crate) fn compare(a: &Decoded, b: &Decoded) -> Result<ImageDifference> {
+    compare_with(a, b, || crate::quality::ssimulacra2(a, b))
+}
+
+#[cfg(feature = "native")]
+pub(crate) fn compare_with(
+    a: &Decoded,
+    b: &Decoded,
+    score: impl FnOnce() -> Result<f64>,
+) -> Result<ImageDifference> {
     ensure!(
         a.info.width == b.info.width && a.info.height == b.info.height,
         "dimensions_changed"
@@ -76,7 +85,7 @@ pub(crate) fn compare(a: &Decoded, b: &Decoded) -> Result<ImageDifference> {
         rgb_mae_255: absolute / channels * 255.0,
         psnr_db: (mse > 0.0).then(|| -10.0 * mse.log10()),
         max_alpha_error: alpha,
-        ssimulacra2: Some(crate::quality::ssimulacra2(a, b)?),
+        ssimulacra2: Some(score()?),
     })
 }
 
@@ -156,6 +165,9 @@ pub(crate) fn check_encoders() -> Result<()> {
 #[cfg(not(all(feature = "native", target_os = "macos")))]
 #[cfg(feature = "native")]
 pub(crate) fn decode(bytes: &[u8], max_pixels: usize) -> Result<Decoded> {
+    if crate::resources::actual_format(bytes) == Some("webp") {
+        return crate::webp_backend::decode(bytes, max_pixels);
+    }
     ensure!(
         bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
         "this_format_requires_macos_imageio"

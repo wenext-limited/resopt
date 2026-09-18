@@ -43,6 +43,9 @@ enum Commands {
         png_level: u8,
         #[arg(long)]
         png_reductions: bool,
+        /// Also compare WebP candidates for loose resources (additional encoding time).
+        #[arg(long)]
+        webp: bool,
         #[arg(long)]
         include_ignored: bool,
     },
@@ -91,6 +94,9 @@ enum Commands {
         /// Allow lossless PNG color-type, bit-depth and palette reductions.
         #[arg(long)]
         png_reductions: bool,
+        /// Also compare WebP candidates for loose resources (additional encoding time).
+        #[arg(long)]
+        webp: bool,
         #[arg(long)]
         json: bool,
         /// Include files matched by Git ignore rules.
@@ -164,6 +170,7 @@ fn run(cli: Cli) -> Result<()> {
             max_pixels,
             png_level,
             png_reductions,
+            webp,
             include_ignored,
         } => {
             resopt::web(
@@ -178,6 +185,7 @@ fn run(cli: Cli) -> Result<()> {
                         max_pixels,
                         png_level,
                         png_reductions,
+                        webp,
                         include_ignored,
                         ..Default::default()
                     },
@@ -199,6 +207,7 @@ fn run(cli: Cli) -> Result<()> {
                 "resopt": env!("CARGO_PKG_VERSION"),
                 "backends": [
                     {"name":"oxipng", "version":"10.2.1", "status":"embedded", "mode":"strict_lossless_png"},
+                    {"name":"libwebp", "status":"embedded", "mode":"opt_in_webp_candidates"},
                     {"name":"Apple ImageIO", "available":resopt::image_backend_available(), "mode":"image_analysis_jpeg_heic"}
                 ],
                 "optional_tools": [
@@ -327,6 +336,7 @@ fn run(cli: Cli) -> Result<()> {
             max_pixels,
             png_level,
             png_reductions,
+            webp,
             json,
         } => {
             let options = AnalysisOptions {
@@ -339,6 +349,7 @@ fn run(cli: Cli) -> Result<()> {
                 max_pixels,
                 png_level,
                 png_reductions,
+                webp,
                 ..AnalysisOptions::default()
             };
             let report = analyze_with_progress(root, &out, options, |done, total| {

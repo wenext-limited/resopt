@@ -1,5 +1,13 @@
 # 更新记录
 
+## Unreleased
+
+- Show completed savings while project analysis is still running; reuse quality-scoring reference data and byte-identical image results.
+- Add opt-in native WebP candidates with `--webp`, including transparency checks and reversible same-format updates.
+- Keep Alpha-warning candidates for review, download, and explicitly approved application; retain source-integrity and structural checks.
+- Protect Android Nine-patch/mipmap resources and block unsupported Android cross-format application.
+- Rewrite the README in English for developers using the tool; move contributor details to the development guide.
+
 ## 0.5.0 · 2026-09-18
 
 - 新增 `resopt web <项目目录>`：本地扫描、浏览器进度与审核页面，无需上传或安装 Bun；macOS 启用 JPEG/HEIC，Linux/Windows 支持 PNG 无损分析。

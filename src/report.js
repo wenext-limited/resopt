@@ -36,7 +36,7 @@ function setSize(id, value) { $(id).textContent = formatSize(value); $(id).title
 const statusLabels = {candidates_available:'有更小候选',inspected:'已检测',inventory_only:'仅清点',failed:'检测失败'};
 const kindLabels = {image:'图片',vector:'矢量图',video:'视频',audio:'音频',animation:'动效',font:'字体',archive:'压缩包',localization:'本地化',data:'数据文件',unclassified:'未分类'};
 function issueLabel(reason) {
-  const labels = {alpha_error_exceeds_policy:'Alpha 误差超限',transparency_presence_changed:'透明状态改变',non_finite_decoded_samples:'解码数据异常',dimensions_changed:'尺寸改变',decoded_image_exceeds_max_pixels:'像素数超过分析上限（可用 --max-pixels 调整）',orientation_changed:'方向改变',multiple_frames_not_transcoded:'多帧资源仅检测，未转码',app_icon:'AppIcon 保留原格式',resizing:'拉伸资源保留原格式',below_explicit_input_threshold:'低于指定的输入门槛',source_changed_during_analysis:'分析期间源文件发生变化','non-IDAT chunks changed; candidate rejected':'元数据块变化'};
+  const labels = {android_nine_patch:"Android Nine-patch 保留原格式",alpha_error_exceeds_policy:'Alpha 误差超限',transparency_presence_changed:'透明状态改变',non_finite_decoded_samples:'解码数据异常',dimensions_changed:'尺寸改变',decoded_image_exceeds_max_pixels:'像素数超过分析上限（可用 --max-pixels 调整）',orientation_changed:'方向改变',multiple_frames_not_transcoded:'多帧资源仅检测，未转码',app_icon:'AppIcon 保留原格式',resizing:'拉伸资源保留原格式',below_explicit_input_threshold:'低于指定的输入门槛',source_changed_during_analysis:'分析期间源文件发生变化','non-IDAT chunks changed; candidate rejected':'元数据块变化'};
   if (labels[reason]) return labels[reason];
   if (String(reason).endsWith('_optimization_backend_not_implemented')) return '已纳入清单，暂未提供此类型的压缩分析';
   return String(reason);
@@ -59,8 +59,9 @@ function preferredCandidate(r) {
   const state = operationStates[records.indexOf(r)];
   return state?.state === 'applied' ? state.candidate : r.smallest_candidate ?? (r.candidates?.length ? 0 : null);
 }
+function alphaWarning(c) { return !!c?.lossy && ["alpha_error_exceeds_policy","transparency_presence_changed"].includes(c?.rejection); }
 function applicationReason(r, c) {
-  if (!c?.valid || !c.artifact) return '请选择通过校验且有体积收益的候选';
+  if ((!c?.valid && !alphaWarning(c)) || !c?.artifact) return '请选择通过校验且有体积收益的候选';
   if (r.resource?.conversion_exclusion) return issueLabel(r.resource.conversion_exclusion);
   return '';
 }
@@ -76,7 +77,7 @@ async function loadOperationStates() {
 async function performAction(action) {
   operationBusy = true; operationMessage = '正在校验和写入…'; renderDetail();
   try {
-    const response = await fetch(`/api/${action.kind}`, {method:'POST',headers:{'Content-Type':'application/json','X-Resopt-Token':report.sessionToken},body:JSON.stringify({resource:action.resource,candidate:action.candidate,approve_lossy:action.approveLossy,plan_token:action.planToken})});
+    const response = await fetch(`/api/${action.kind}`, {method:'POST',headers:{'Content-Type':'application/json','X-Resopt-Token':report.sessionToken},body:JSON.stringify({resource:action.resource,candidate:action.candidate,approve_lossy:action.approveLossy,approve_alpha_loss:!!action.approveAlphaLoss,plan_token:action.planToken})});
     const result = await response.json();
     if (result.states) operationStates = result.states;
     if (!response.ok) throw new Error(result.error || '操作失败');
@@ -98,15 +99,16 @@ function renderActions(pane, r, c) {
     const candidateIndex = chosen;
     operationBusy = true; operationMessage = '正在检查文件引用…'; renderDetail();
     try {
-      const response = await fetch('/api/preview', {method:'POST',headers:{'Content-Type':'application/json','X-Resopt-Token':report.sessionToken},body:JSON.stringify({resource:index,candidate:candidateIndex})});
+      const response = await fetch('/api/preview', {method:'POST',headers:{'Content-Type':'application/json','X-Resopt-Token':report.sessionToken},body:JSON.stringify({resource:index,candidate:candidateIndex,approve_alpha_loss:alphaWarning(c)})});
       const plan = await response.json();
       if (!response.ok) throw new Error(plan.error || '无法生成引用迁移计划');
-      pendingAction = {kind:'apply',resource:index,candidate:candidateIndex,approveLossy:!!c.lossy,planToken:plan.plan_token};
-      $('apply-title').textContent = c.lossy ? '确认有损优化' : '确认无损优化';
-      $('apply-confirm').textContent = '确认并应用';
+      pendingAction = {kind:'apply',resource:index,candidate:candidateIndex,approveLossy:!!c.lossy,approveAlphaLoss:alphaWarning(c),planToken:plan.plan_token};
+      $('apply-title').textContent = alphaWarning(c) ? '警告：透明度校验未通过' : c.lossy ? '确认有损优化' : '确认无损优化';
+      $('apply-confirm').textContent = alphaWarning(c) ? '接受透明度变化并应用' : '确认并应用';
       $('apply-note').textContent = plan.loose_conversion ? '将按报告的忽略规则迁移可识别的静态引用。动态拼接、第三方解码器和项目外引用需要你复核；原图和引用文件均会备份。' : '原文件会备份，可在页面恢复。请先检查原尺寸候选的画质。';
       const references = plan.reference_files || [];
       $('apply-description').textContent = `${plan.source} → ${plan.target}\n${candidateLabel(c)}：${formatSize(r.resource.bytes)} → ${formatSize(c.bytes)}，节省 ${formatSize(c.savings_bytes)}。${c.lossy ? '此操作会有画质损失。' : ''}\n引用文件（${references.length}）：${references.length ? '\n'+references.join('\n') : '未发现需要修改的静态引用'}`;
+      if(alphaWarning(c)) $('apply-description').textContent += `\n警告：${issueLabel(c.rejection)}；最大 Alpha 误差 ${((c.difference?.max_alpha_error || 0)*100).toFixed(2)}%。可能出现透明背景或边缘变化。仅在确认接受此差异时继续。`;
       $('apply-dialog').showModal(); $('apply-cancel').focus(); operationMessage = '';
     } catch(error) { pendingAction = null; operationMessage = error.message; }
     finally { operationBusy = false; renderDetail(); }
@@ -126,12 +128,13 @@ $('apply-confirm').addEventListener('click',()=>{const action=pendingAction;pend
 const candidates = records.filter(r => saving(r) > 0).length;
 $('total-count').textContent = number(records.length); $('candidate-count').textContent = number(candidates);
 setSize('total-savings', report.savings || 0);
-$('scope-note').textContent = `总计 ${formatSize(records.reduce((n,r) => n + (r.resource?.bytes || 0), 0))} · 质量 ${(report.options?.qualities || []).join(' / ')}\n候选通过结构及 Alpha 检查，画质仍需审阅。`;
+$('scope-note').textContent = `总计 ${formatSize(records.reduce((n,r) => n + (r.resource?.bytes || 0), 0))} · 质量 ${(report.options?.qualities || []).join(' / ')}\n默认推荐通过结构及 Alpha 检查；带警告的候选需单独确认。`;
+$('mode-warnings').textContent = number(records.filter(r=>r.candidates?.some(c=>alphaWarning(c)&&c.artifact)).length);
 $('mode-candidates').textContent = number(candidates); $('mode-images').textContent = number(records.filter(r => r.resource?.kind === 'image').length); $('mode-all').textContent = number(records.length);
 for (const format of [...new Set(records.map(r => r.resource?.format).filter(Boolean))].sort()) { const option = el('option','',format.toUpperCase()); option.value = format; $('format-filter').append(option); }
 function filterRecords() {
   const query = $('search').value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean); const format = $('format-filter').value;
-  filtered = records.filter(r => (mode !== 'candidates' || saving(r) > 0) && (mode !== 'images' || r.resource?.kind === 'image') && (format === 'all' || r.resource?.format === format) && query.every(q => `${pathText(r)} ${r.resource?.format} ${r.resource?.kind}`.toLocaleLowerCase().includes(q)));
+  filtered = records.filter(r => (mode !== 'candidates' || saving(r) > 0) && (mode !== 'warnings' || r.candidates?.some(c=>alphaWarning(c)&&c.artifact)) && (mode !== 'images' || r.resource?.kind === 'image') && (format === 'all' || r.resource?.format === format) && query.every(q => `${pathText(r)} ${r.resource?.format} ${r.resource?.kind}`.toLocaleLowerCase().includes(q)));
   const sort = $('sort').value;
   filtered.sort((a,b) => (sort === 'savings' ? saving(b) - saving(a) : sort === 'size' ? (b.resource?.bytes || 0) - (a.resource?.bytes || 0) : basename(pathText(a)).localeCompare(basename(pathText(b)))) || pathText(a).localeCompare(pathText(b)));
   page = 0; selected = filtered[0] || null; chosen = preferredCandidate(selected);

@@ -36,6 +36,8 @@ struct Transaction {
     changes: Vec<Change>,
     #[serde(default)]
     references: Option<crate::references::ReferenceContext>,
+    #[serde(default)]
+    approved_alpha_loss: bool,
 }
 
 type FileEdit = crate::references::Edit;
@@ -148,6 +150,7 @@ impl Review {
         index: usize,
         candidate_index: usize,
         approve_lossy: bool,
+        approve_alpha_loss: bool,
     ) -> Result<Prepared> {
         let resource = self.source(index)?;
         let candidate = resource
@@ -155,7 +158,14 @@ impl Review {
             .get(candidate_index)
             .context("unknown candidate")?;
         ensure!(
-            candidate.valid && candidate.artifact.is_some(),
+            (candidate.valid
+                || (approve_alpha_loss
+                    && candidate.lossy
+                    && matches!(
+                        candidate.rejection.as_deref(),
+                        Some("alpha_error_exceeds_policy" | "transparency_presence_changed")
+                    )))
+                && candidate.artifact.is_some(),
             "candidate not eligible"
         );
         ensure!(
@@ -194,8 +204,8 @@ impl Review {
                 ensure!(!candidate.lossy, "PNG must be lossless");
                 optimizer::verify(&original, &optimized, self.report.options.png_reductions)?;
             }
-            "jpeg" | "heic" => {
-                ensure!(candidate.lossy, "JPEG/HEIC requires lossy approval");
+            "jpeg" | "heic" | "webp" => {
+                ensure!(candidate.lossy, "JPEG/HEIC/WebP requires lossy approval");
                 let before = image_backend::decode(&original, self.report.options.max_pixels)?;
                 let after = image_backend::decode(&optimized, self.report.options.max_pixels)?;
                 ensure!(
@@ -209,8 +219,10 @@ impl Review {
                     "invalid alpha policy"
                 );
                 ensure!(
-                    delta.max_alpha_error <= self.report.options.max_alpha_error
-                        && before.info.has_transparent_pixels == after.info.has_transparent_pixels,
+                    approve_alpha_loss
+                        || (delta.max_alpha_error <= self.report.options.max_alpha_error
+                            && before.info.has_transparent_pixels
+                                == after.info.has_transparent_pixels),
                     "alpha verification failed"
                 );
                 ensure!(
@@ -227,6 +239,22 @@ impl Review {
         let rel = &resource.resource.path;
         let crossing =
             candidate.format != resource.resource.format || resource.resource.extension_mismatch;
+        ensure!(
+            !rel.file_name()
+                .is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().ends_with(".9.png")),
+            "Nine-patch optimization requires Android-specific validation"
+        );
+        ensure!(
+            !crossing || !crate::resources::android_resource_path(rel),
+            "Android cross-format application is not supported; review/download the candidate instead"
+        );
+        ensure!(
+            candidate.format != "webp"
+                || !rel.components().any(|p| Path::new(p.as_os_str())
+                    .extension()
+                    .is_some_and(|e| e == "xcassets")),
+            "WebP is not supported as an Xcode image-set rendition"
+        );
         let target = if crossing {
             rel.with_extension(&candidate.format)
         } else {
@@ -317,8 +345,18 @@ impl Review {
         Ok(Prepared { edits, references })
     }
 
+    #[cfg(test)]
     pub fn preview(&self, index: usize, candidate: usize) -> Result<serde_json::Value> {
-        let prepared = self.prepare(index, candidate, true)?;
+        self.preview_with_warnings(index, candidate, false)
+    }
+
+    pub fn preview_with_warnings(
+        &self,
+        index: usize,
+        candidate: usize,
+        approve_alpha_loss: bool,
+    ) -> Result<serde_json::Value> {
+        let prepared = self.prepare(index, candidate, true, approve_alpha_loss)?;
         let r = self.source(index)?;
         let c = &r.candidates[candidate];
         let target = if c.format != r.resource.format || r.resource.extension_mismatch {
@@ -342,6 +380,7 @@ impl Review {
         self.apply_reviewed(index, candidate, approve_lossy, None)
     }
 
+    #[cfg(test)]
     pub fn apply_reviewed(
         &self,
         index: usize,
@@ -349,8 +388,19 @@ impl Review {
         approve_lossy: bool,
         token: Option<&str>,
     ) -> Result<()> {
+        self.apply_with_warnings(index, candidate_index, approve_lossy, false, token)
+    }
+
+    pub fn apply_with_warnings(
+        &self,
+        index: usize,
+        candidate_index: usize,
+        approve_lossy: bool,
+        approve_alpha_loss: bool,
+        token: Option<&str>,
+    ) -> Result<()> {
         let _lock = self.lock()?;
-        let prepared = self.prepare(index, candidate_index, approve_lossy)?;
+        let prepared = self.prepare(index, candidate_index, approve_lossy, approve_alpha_loss)?;
         if prepared.references.is_some() {
             ensure!(
                 token.is_some(),
@@ -382,6 +432,7 @@ impl Review {
             candidate: candidate_index,
             changes: vec![],
             references: prepared.references,
+            approved_alpha_loss: approve_alpha_loss,
         };
         for (path, before, after) in prepared.edits {
             let save = |data: Option<Vec<u8>>| -> Result<Option<String>> {
@@ -647,6 +698,13 @@ mod tests {
         }
         let optimized = if format == "png" {
             optimizer::optimize(&original, &crate::Policy::default()).unwrap()
+        } else if format == "webp" {
+            crate::webp_backend::encode(
+                &original,
+                &image_backend::decode(&original, crate::DEFAULT_MAX_PIXELS).unwrap(),
+                85,
+            )
+            .unwrap()
         } else {
             image_backend::encode(&original, format, 85).unwrap()
         };
@@ -748,6 +806,59 @@ mod tests {
         assert!(review.restore(0).is_err());
         assert_eq!(fs::read(&source).unwrap(), b"later user edit");
         assert_eq!(review.states()["0"]["state"], "conflict");
+    }
+
+    #[test]
+    fn alpha_warning_requires_explicit_approval_and_still_checks_file_integrity() {
+        let (root, out, mut review, _) = fixture("webp", false);
+        let mut original = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut original, 64, 64);
+            encoder.set_color(png::ColorType::Rgba);
+            encoder.set_compression(png::Compression::NoCompression);
+            encoder
+                .write_header()
+                .unwrap()
+                .write_image_data(&[36, 80, 120, 128].repeat(64 * 64))
+                .unwrap();
+        }
+        fs::write(root.path().join("picture.png"), &original).unwrap();
+        let r = &mut review.report.resources[0];
+        r.sha256 = Some(hash(&original));
+        r.resource.bytes = original.len() as u64;
+        r.smallest_candidate = None;
+        r.candidates[0].valid = false;
+        r.candidates[0].rejection = Some("alpha_error_exceeds_policy".into());
+        assert!(review.preview(0, 0).is_err());
+        assert!(review.apply_reviewed(0, 0, true, None).is_err());
+        let plan = review.preview_with_warnings(0, 0, true).unwrap();
+        assert!(
+            review
+                .apply_with_warnings(0, 0, true, false, plan["plan_token"].as_str())
+                .is_err()
+        );
+        review
+            .apply_with_warnings(0, 0, true, true, plan["plan_token"].as_str())
+            .unwrap();
+        assert!(root.path().join("picture.webp").is_file());
+        let transaction: serde_json::Value = serde_json::from_slice(
+            &fs::read(out.path().join("operations/0/transaction.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(transaction["approved_alpha_loss"], true);
+        review.restore(0).unwrap();
+        assert_eq!(fs::read(root.path().join("picture.png")).unwrap(), original);
+        let plan = review.preview_with_warnings(0, 0, true).unwrap();
+        fs::write(root.path().join("picture.png"), b"external edit").unwrap();
+        assert!(
+            review
+                .apply_with_warnings(0, 0, true, true, plan["plan_token"].as_str())
+                .is_err()
+        );
+        assert_eq!(
+            fs::read(root.path().join("picture.png")).unwrap(),
+            b"external edit"
+        );
     }
 
     #[test]

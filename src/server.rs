@@ -17,6 +17,8 @@ struct Action {
     #[serde(default)]
     approve_lossy: bool,
     #[serde(default)]
+    approve_alpha_loss: bool,
+    #[serde(default)]
     plan_token: Option<String>,
 }
 
@@ -55,6 +57,7 @@ pub(crate) fn serve_on(directory: &Path, server: Server) -> Result<()> {
                 Some("png") => "image/png",
                 Some("jpeg" | "jpg") => "image/jpeg",
                 Some("heic") => "image/heic",
+                Some("webp") => "image/webp",
                 _ => "application/octet-stream",
             };
             let url = format!("/{}", path.to_string_lossy().replace('\\', "/"));
@@ -136,16 +139,18 @@ pub(crate) fn serve_on(directory: &Path, server: Server) -> Result<()> {
                 ensure!(body.len() <= 4096, "request too large");
                 let action: Action = serde_json::from_slice(&body)?;
                 if route == "/api/preview" {
-                    return review.preview(
+                    return review.preview_with_warnings(
                         action.resource,
                         action.candidate.context("missing candidate")?,
+                        action.approve_alpha_loss,
                     );
                 }
                 if route == "/api/apply" {
-                    review.apply_reviewed(
+                    review.apply_with_warnings(
                         action.resource,
                         action.candidate.context("missing candidate")?,
                         action.approve_lossy,
+                        action.approve_alpha_loss,
                         action.plan_token.as_deref(),
                     )?;
                 } else {

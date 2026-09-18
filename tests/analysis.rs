@@ -417,3 +417,170 @@ fn analysis_png_candidate_uses_configured_reductions() {
     };
     assert!(png_bytes("reduced", true) < png_bytes("strict", false));
 }
+
+#[test]
+fn identical_images_reuse_immutable_candidates_but_keep_project_paths() {
+    let root = tempfile::tempdir().unwrap();
+    let input = root.path().join("project");
+    let bytes = png(128);
+    write(&input, "a.png", &bytes);
+    write(&input, "nested/b.png", &bytes);
+    let report = analyze(
+        &input,
+        root.path().join("report"),
+        AnalysisOptions {
+            qualities: vec![85],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(report.resources.len(), 2);
+    let a = &report.resources[0];
+    let b = &report.resources[1];
+    assert_ne!(a.resource.path, b.resource.path);
+    assert_eq!(a.sha256, b.sha256);
+    assert!(!a.candidates.is_empty());
+    for (ac, bc) in a.candidates.iter().zip(&b.candidates) {
+        assert_eq!(ac.artifact, bc.artifact);
+        assert_eq!(ac.bytes, bc.bytes);
+        assert_eq!(ac.valid, bc.valid);
+    }
+    assert!(a.candidates.iter().any(|c| c.artifact.is_some()));
+    assert_eq!(std::fs::read(input.join("a.png")).unwrap(), bytes);
+    assert_eq!(std::fs::read(input.join("nested/b.png")).unwrap(), bytes);
+}
+
+#[test]
+fn webp_is_opt_in_and_android_nine_patch_is_not_transcoded() {
+    let base = tempfile::tempdir().unwrap();
+    let input = base.path().join("project");
+    write(&input, "a.png", &png(128));
+    write(&input, "app/src/main/res/drawable/foo.9.png", &png(128));
+    write(&input, "app/src/main/res/drawable/ordinary.png", &png(128));
+    write(&input, "Assets.xcassets/Icon.imageset/file.png", &png(128));
+    write(
+        &input,
+        "Assets.xcassets/Icon.imageset/Contents.json",
+        br#"{"images":[{"filename":"file.png","idiom":"universal"}]}"#,
+    );
+    let report = analyze(
+        &input,
+        base.path().join("webp"),
+        AnalysisOptions {
+            webp: true,
+            qualities: vec![85],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let a = report
+        .resources
+        .iter()
+        .find(|r| r.resource.path == std::path::Path::new("a.png"))
+        .unwrap();
+    let catalog = report
+        .resources
+        .iter()
+        .find(|r| r.resource.path.ends_with("Icon.imageset/file.png"))
+        .unwrap();
+    assert!(catalog.candidates.iter().all(|c| c.format != "webp"));
+    let candidate = a.candidates.iter().find(|c| c.format == "webp").unwrap();
+    assert!(candidate.valid, "{:?}", candidate.rejection);
+    assert!(candidate.artifact.is_some());
+    let data = std::fs::read(
+        base.path()
+            .join("webp")
+            .join(candidate.artifact.as_ref().unwrap()),
+    )
+    .unwrap();
+    write(&input, "input.webp", &data);
+    let nine = report
+        .resources
+        .iter()
+        .find(|r| r.resource.path.ends_with("foo.9.png"))
+        .unwrap();
+    assert!(nine.candidates.is_empty());
+    assert_eq!(
+        nine.resource.conversion_exclusion.as_deref(),
+        Some("android_nine_patch")
+    );
+    let android = report
+        .resources
+        .iter()
+        .find(|r| r.resource.path.ends_with("ordinary.png"))
+        .unwrap();
+    assert!(
+        android
+            .candidates
+            .iter()
+            .all(|c| matches!(c.format.as_str(), "png" | "webp"))
+    );
+    let plain = analyze(
+        &input,
+        base.path().join("plain"),
+        AnalysisOptions {
+            qualities: vec![85],
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert!(
+        plain
+            .resources
+            .iter()
+            .all(|r| r.candidates.iter().all(|c| c.format != "webp"))
+    );
+    let wp = plain
+        .resources
+        .iter()
+        .find(|r| r.resource.path.ends_with("input.webp"))
+        .unwrap();
+    assert!(wp.image.is_some());
+}
+
+#[test]
+fn alpha_rejected_candidates_keep_previews_and_downloads_without_becoming_recommended() {
+    let root = tempfile::tempdir().unwrap();
+    let input = root.path().join("project");
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, 64, 64);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Sixteen);
+        encoder.set_compression(png::Compression::NoCompression);
+        let pixel = [12340u16, 24680, 45678, 32700]
+            .into_iter()
+            .flat_map(u16::to_be_bytes)
+            .collect::<Vec<_>>();
+        encoder
+            .write_header()
+            .unwrap()
+            .write_image_data(&pixel.repeat(64 * 64))
+            .unwrap();
+    }
+    write(&input, "alpha.png", &bytes);
+    let out = root.path().join("report");
+    let report = analyze(
+        &input,
+        &out,
+        AnalysisOptions {
+            webp: true,
+            qualities: vec![85],
+            max_alpha_error: 0.0,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let resource = &report.resources[0];
+    let index = resource
+        .candidates
+        .iter()
+        .position(|c| c.format == "webp")
+        .unwrap();
+    let c = &resource.candidates[index];
+    assert!(!c.valid);
+    assert_eq!(c.rejection.as_deref(), Some("alpha_error_exceeds_policy"));
+    assert!(out.join(c.artifact.as_ref().unwrap()).is_file());
+    assert!(out.join(c.preview.as_ref().unwrap()).is_file());
+    assert_ne!(resource.smallest_candidate, Some(index));
+}
