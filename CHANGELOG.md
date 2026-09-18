@@ -2,6 +2,9 @@
 
 ## 未发布
 
+- 新增浏览器版：复用 Rust 核心，通过 WASM 在本机无损优化静态 PNG、校验像素并计算 SSIMULACRA2；支持明暗主题、暂停恢复及 ZIP 下载。
+- 使用 Bun + TypeScript + Web Worker 构建网页，Maud 生成 HTML；新增独立浏览器构建与 WASM 回归测试 CI。
+
 - `analyze` 为每个候选计算 SSIMULACRA2 感知画质分数（黑、白、灰背景下的最低分），写入
   `difference.ssimulacra2` 并显示在 HTML 报告中；旧的 `analysis.json` 仍可读取。
 - 解码像素上限由约 419 万提高到默认 16,777,216，并新增 `--max-pixels`（最高 67,108,864）；

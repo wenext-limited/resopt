@@ -22,14 +22,14 @@ pub(crate) fn ensure_same_rgba(original: &[u8], candidate: &[u8], limit: usize) 
     }
 }
 
-fn reader(bytes: &[u8], limit: usize) -> Result<Reader<'_>> {
+pub(crate) fn reader(bytes: &[u8], limit: usize) -> Result<Reader<'_>> {
     let mut decoder = png::Decoder::new(Cursor::new(bytes));
     decoder.set_limits(png::Limits { bytes: limit });
     decoder.set_transformations(Transformations::EXPAND);
     Ok(decoder.read_info()?)
 }
 
-fn next_rgba_row(reader: &mut Reader<'_>) -> Result<Option<Vec<u16>>> {
+pub(crate) fn next_rgba_row(reader: &mut Reader<'_>) -> Result<Option<Vec<u16>>> {
     let (color, depth) = reader.output_color_type();
     let Some(row) = reader.next_row()? else {
         return Ok(None);

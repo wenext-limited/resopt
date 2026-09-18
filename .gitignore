@@ -1,2 +1,6 @@
 /target/
 /.resopt/
+
+/web/node_modules/
+/web/generated/
+/web/dist/

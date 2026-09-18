@@ -1,5 +1,6 @@
-#[cfg(target_os = "macos")]
+#[cfg(all(feature = "native", target_os = "macos"))]
 use anyhow::Context;
+#[cfg(feature = "native")]
 use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 
@@ -37,6 +38,7 @@ pub struct ImageDifference {
     pub ssimulacra2: Option<f64>,
 }
 
+#[cfg(feature = "native")]
 pub(crate) fn compare(a: &Decoded, b: &Decoded) -> Result<ImageDifference> {
     ensure!(
         a.info.width == b.info.width && a.info.height == b.info.height,
@@ -78,6 +80,7 @@ pub(crate) fn compare(a: &Decoded, b: &Decoded) -> Result<ImageDifference> {
     })
 }
 
+#[cfg(feature = "native")]
 pub(crate) fn preview(image: &Decoded) -> Result<Vec<u8>> {
     let (display_width, display_height) = if (5..=8).contains(&image.info.orientation) {
         (image.info.height, image.info.width)
@@ -129,9 +132,10 @@ pub(crate) fn preview(image: &Decoded) -> Result<Vec<u8>> {
 }
 
 pub fn image_backend_available() -> bool {
-    cfg!(target_os = "macos")
+    cfg!(all(feature = "native", target_os = "macos"))
 }
 
+#[cfg(feature = "native")]
 pub(crate) fn check_encoders() -> Result<()> {
     let mut bytes = Vec::new();
     {
@@ -149,16 +153,18 @@ pub(crate) fn check_encoders() -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(all(feature = "native", target_os = "macos")))]
+#[cfg(feature = "native")]
 pub(crate) fn decode(_: &[u8], _: usize) -> Result<Decoded> {
     anyhow::bail!("image_analysis_requires_macos_imageio")
 }
-#[cfg(not(target_os = "macos"))]
+#[cfg(not(all(feature = "native", target_os = "macos")))]
+#[cfg(feature = "native")]
 pub(crate) fn encode(_: &[u8], _: &str, _: u8) -> Result<Vec<u8>> {
     anyhow::bail!("image_encoding_requires_macos_imageio")
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(feature = "native", target_os = "macos"))]
 mod apple {
     use super::*;
     use objc2_core_foundation::{
@@ -309,10 +315,10 @@ mod apple {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(all(feature = "native", target_os = "macos"))]
 pub(crate) use apple::{decode, encode};
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(test, feature = "native", target_os = "macos"))]
 mod tests {
     use super::*;
 

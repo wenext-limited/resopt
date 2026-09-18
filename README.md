@@ -31,6 +31,61 @@ JPEG／HEIC 编码仍仅支持 macOS；其它平台可清点资源并执行严�
 工作流使用 GitHub 自动提供的 `GITHUB_TOKEN`；无需额外发布密钥，**不会自动发布 crates.io**。
 重跑不会覆盖已存在的 GitHub Release；上传失败若留下草稿，应先检查草稿再重试。
 
+## 浏览器版（WASM）
+
+浏览器版以静态页面运行：选择 PNG → 本机优化 → 原图对比 → 下载图片或 ZIP 报告。
+图片不上传到服务端，也不会覆盖原文件。支持透明 PNG、严格无损与无损颜色精简、
+逐像素校验、SSIMULACRA2、暂停／继续、深浅主题，以及重复文件名的安全导出。
+
+首版只处理手动选择的静态 PNG，每张限制 16 MiB / 2,097,152 像素，单批最多 500 张，
+优化结果缓存上限 128 MiB。JPEG／HEIC、大图、项目扫描、Git 忽略规则和引用迁移仍使用原生 CLI。
+网页不会把选中的图片当成一个完整 Xcode 项目，也不会自动更改项目引用。
+
+### 本地开发
+
+以下命令在 Git 仓库源码根目录执行，需要 Rust 1.89+、带 WebAssembly 后端的 Clang，以及 Bun 1.3.14。
+
+```sh
+rustup target add wasm32-unknown-unknown
+rustup component add llvm-tools-preview
+cargo install wasm-bindgen-cli --version 0.2.128 --locked
+cd web
+bun install --frozen-lockfile
+bun run dev
+```
+
+默认打开 `http://127.0.0.1:8432/`；可用 `PORT=8433 bun run dev` 指定端口。
+Bun 提供 HTML／TypeScript／CSS 热更新，图片优化在独立 Web Worker 中运行。
+修改 Worker、Rust 或 Maud HTML 后，请重启 `bun run dev`，重新生成引擎和页面。
+
+### 静态构建与验证
+
+```sh
+cd web
+bun run build
+bun run typecheck
+bun test
+bun run preview
+```
+
+`web/dist/` 可部署到任意静态 HTTP(S) 站点；其中的 Worker 与 WASM 文件须保持同源。
+部署后无需 Bun 或业务后端，也无需跨源隔离头：当前 WASM 引擎为单线程，取消任务通过终止 Worker 实现。
+不要用 `file://` 打开构建产物。开发／预览服务只监听本机，预览服务不接受上传或写入请求。
+CI 会生成可下载的 `browser-site` 静态站点 artifact，不会自动公开部署网站。
+
+### 代码组织
+
+- `src/portable.rs`：原生与 WASM 共用的内存 PNG 优化和 sRGB RGBA 评分入口。
+- 原生能力由默认启用的 `native` Cargo feature 控制；`--no-default-features` 不引入
+  文件扫描、HTTP 服务、Git 子进程或 Apple 编码后端。
+- `crates/resopt-wasm`：薄的 `wasm-bindgen` 接口，以及 Maud 页面生成示例。
+- `web/`：Bun 构建、TypeScript 交互和 Worker；浏览器不运行 Bun。
+
+构建脚本会使用 Rust `llvm-tools-preview` 中的 `llvm-ar`，避免 macOS 原生归档器漏掉
+WASM 的 C 符号；也可通过 `AR_wasm32_unknown_unknown`、`WASM_BINDGEN` 和
+`CARGO_TARGET_DIR` 指定已有工具。PNG 的 OxiPNG 后端在 WASM 上启用 `freestanding`，
+关闭原生线程与 `std::time::Instant` 超时，原生 CLI 保留原有设置。
+
 ## 安装
 
 crates.io 包名为 **`resopt-cli`**，安装后的命令仍是 **`resopt`**：

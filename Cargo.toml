@@ -1,3 +1,8 @@
+[workspace]
+members = [".", "crates/resopt-wasm"]
+default-members = ["."]
+resolver = "2"
+
 [package]
 name = "resopt-cli"
 version = "0.4.0"
@@ -18,32 +23,40 @@ path = "src/lib.rs"
 [[bin]]
 name = "resopt"
 path = "src/main.rs"
+required-features = ["native"]
+
+[features]
+default = ["native"]
+native = ["dep:ignore", "dep:regex", "dep:maud", "dep:tiny_http", "dep:getrandom", "dep:clap", "dep:tempfile", "dep:toml", "dep:walkdir", "dep:xcassets", "dep:rayon", "dep:objc2", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-image-io", "oxipng/parallel"]
 
 [dependencies]
-ignore = "0.4.33"
-regex = "1"
-maud = "0.27"
-tiny_http = "0.12"
-getrandom = "0.4"
+ignore = { version = "0.4.33", optional = true }
+regex = { version = "1", optional = true }
+maud = { version = "0.27", optional = true }
+tiny_http = { version = "0.12", optional = true }
+getrandom = { version = "0.4", optional = true }
 anyhow = "1"
-clap = { version = "4.6", features = ["derive"] }
-oxipng = { version = "=10.2.1", default-features = false, features = ["parallel"] }
+clap = { version = "4.6", features = ["derive"], optional = true }
+oxipng = { version = "=10.2.1", default-features = false }
 png = "0.18"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-tempfile = "3"
-toml = "0.8"
-walkdir = "2"
-xcassets = "0.2"
-rayon = "1"
+tempfile = { version = "3", optional = true }
+toml = { version = "0.8", optional = true }
+walkdir = { version = "2", optional = true }
+xcassets = { version = "0.2", optional = true }
+rayon = { version = "1", optional = true }
 fast-ssim2 = "0.8.2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-objc2 = "0.6"
-objc2-core-foundation = "0.3.2"
-objc2-core-graphics = "0.3.2"
-objc2-image-io = "0.3.2"
+objc2 = { version = "0.6", optional = true }
+objc2-core-foundation = { version = "0.3.2", optional = true }
+objc2-core-graphics = { version = "0.3.2", optional = true }
+objc2-image-io = { version = "0.3.2", optional = true }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+oxipng = { version = "=10.2.1", default-features = false, features = ["freestanding"] }
 
 [dev-dependencies]
 crc32fast = "1"

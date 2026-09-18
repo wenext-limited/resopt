@@ -1,6 +1,8 @@
 use anyhow::{Context, Result, bail, ensure};
 use serde::{Deserialize, Serialize};
-use std::{io::Cursor, time::Duration};
+use std::io::Cursor;
+#[cfg(not(target_arch = "wasm32"))]
+use std::time::Duration;
 
 pub(crate) const MAX_INPUT: usize = 64 * 1024 * 1024;
 const MAX_DECODED: usize = 256 * 1024 * 1024;
@@ -82,7 +84,16 @@ fn encode(original: &[u8], level: u8, reductions: bool) -> Result<Vec<u8>> {
     options.interlace = None;
     options.strip = oxipng::StripChunks::None;
     options.max_decompressed_size = Some(MAX_DECODED);
-    options.timeout = Some(Duration::from_secs(30));
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        options.timeout = Some(Duration::from_secs(30));
+    }
+    // Browser hosts cancel the Worker. std::time::Instant has no clock on
+    // wasm32-unknown-unknown; leave OxiPNG's native deadline disabled there.
+    #[cfg(target_arch = "wasm32")]
+    {
+        options.timeout = None;
+    }
     Ok(oxipng::optimize_from_memory(original, &options)?)
 }
 

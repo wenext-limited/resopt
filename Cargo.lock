@@ -864,6 +864,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "resopt-wasm"
+version = "0.1.0"
+dependencies = [
+ "maud",
+ "resopt-cli",
+ "serde_json",
+ "wasm-bindgen",
+]
+
+[[package]]
 name = "rgb"
 version = "0.8.53"
 source = "registry+https://github.com/rust-lang/crates.io-index"
