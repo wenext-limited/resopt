@@ -1,11 +1,11 @@
 # 更新记录
 
-## 未发布
+## 0.5.0 · 2026-09-18
 
 - 新增 `resopt web <项目目录>`：本地扫描、浏览器进度与审核页面，无需上传或安装 Bun；macOS 启用 JPEG/HEIC，Linux/Windows 支持 PNG 无损分析。
 - 在线站点切换为纯 WASM；原生 Bun 调试服务强制 loopback，拒绝远程编码配置。
 
-- 新增 macOS 原生网页托管与 JPEG / HEIC 编码接口；支持项目目录拖拽、嵌套 `.gitignore`、批量收益摘要和保留目录的候选 ZIP 下载。
+- 源码中的 macOS Bun 调试页面支持目录拖拽、嵌套 `.gitignore` 和候选 ZIP 导出，仅允许本机访问。正式项目入口为 `resopt web`，在线站点不接受上传。
 
 - 新增浏览器版：复用 Rust 核心，通过 WASM 在本机无损优化静态 PNG、校验像素并计算 SSIMULACRA2；支持明暗主题、暂停恢复及 ZIP 下载。
 - 使用 Bun + TypeScript + Web Worker 构建网页，Maud 生成 HTML；新增独立浏览器构建与 WASM 回归测试 CI。

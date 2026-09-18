@@ -21,6 +21,7 @@ def main():
     if result != f'resopt {version}':
         raise SystemExit(f'Wrong binary version: {result!r}')
     subprocess.run([str(binary.resolve()), 'serve', '--help'], check=True)
+    subprocess.run([str(binary.resolve()), 'web', '--help'], check=True)
     out = Path('dist')
     out.mkdir(exist_ok=True)
     archive = out / f'{name}{".zip" if windows else ".tar.gz"}'
