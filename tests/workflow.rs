@@ -370,9 +370,19 @@ fn existing_plan_is_never_overwritten_and_lock_is_respected() {
     let manifest = fs::read(directory.join("plan.json")).unwrap();
     assert!(create_plan(root.path(), &directory, policy()).is_err());
     assert_eq!(fs::read(directory.join("plan.json")).unwrap(), manifest);
-    fs::write(directory.join(".lock"), b"other process").unwrap();
+    // A live process holds the plan lock through the operating system.
+    let held = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(directory.join(".lock"))
+        .unwrap();
+    held.lock().unwrap();
     assert!(apply(&directory).is_err());
     assert!(directory.join(".lock").exists());
+    // A lock file left by a crashed process does not block the plan forever.
+    drop(held);
+    apply(&directory).unwrap();
 }
 
 #[cfg(unix)]
