@@ -72,7 +72,13 @@ pub fn web(root: impl AsRef<Path>, options: WebOptions) -> Result<()> {
                 |index, resource, _, total| {
                     let mut live = worker_app.live.lock().unwrap_or_else(|e| e.into_inner());
                     live.total = total;
-                    live.rows.push((index, resource.clone()));
+                    live.rows.push((
+                        index,
+                        crate::ResourceAnalysis {
+                            fingerprint: None,
+                            ..resource.clone()
+                        },
+                    ));
                 },
             )
             .and_then(|_| Review::open(&out))

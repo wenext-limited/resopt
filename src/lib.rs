@@ -38,6 +38,10 @@ mod capabilities;
 #[cfg(feature = "native")]
 mod catalog;
 #[cfg(feature = "native")]
+mod similarity;
+#[cfg(feature = "native")]
+pub use similarity::{Fingerprint, SimilarGroup};
+#[cfg(feature = "native")]
 mod svga;
 #[cfg(feature = "native")]
 mod timings;

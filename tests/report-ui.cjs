@@ -77,7 +77,8 @@ test('every translation key used by the UI exists', () => {
   const used = new Set([...source.matchAll(/\bt\('([A-Za-z0-9_]+)'/g)].map(m => m[1]));
   const report = fs.readFileSync(path.join(__dirname, '../src/report.rs'), 'utf8');
   for (const match of report.matchAll(/data-i18n(?:-label|-placeholder)?="([A-Za-z0-9_]+)"/g)) used.add(match[1]);
-  for (const mode of ['Candidates', 'Warnings', 'Applied', 'Images', 'Unsupported', 'Failed', 'All']) used.add(`mode${mode}`);
+  for (const mode of ['Candidates', 'Warnings', 'Duplicates', 'Applied', 'Images', 'Unsupported', 'Failed', 'All']) used.add(`mode${mode}`);
+  for (const kind of ['identical', 'resized', 'similar']) used.add(`dup_${kind}`);
   const missing = [...used].filter(key => !api.MESSAGES.en[key]);
   assert.deepEqual(missing, []);
 });

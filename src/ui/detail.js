@@ -64,12 +64,27 @@ function renderDetail() {
     renderActions(pane, r, c);
     pane.append(candidateTable(r, variants));
   }
+  const group = (state.meta?.similarGroups || [])[duplicateGroups().get(indexOf(r))];
+  if (group) pane.append(duplicateBlock(r, group));
   if (r.issues?.length) pane.append(el('div', 'reasons', r.issues.map(i => issueText(locale, i)).join('; ')));
   const notes = el('details'), options = state.meta?.options || {};
   notes.append(el('summary', '', t('methodology')), el('p', '', t('methodology1', `${((options.max_alpha_error || 0) * 100).toFixed(3)}%`, options.min_score ?? '—')), el('p', '', t('methodology2')));
   pane.append(notes);
   if (!reducedMotion()) pane.animate([{ opacity: .7, transform: 'translateY(2px)' }, { opacity: 1, transform: 'none' }], { duration: 140, easing: 'ease-out' });
   pane.scrollTop = 0;
+}
+
+function duplicateBlock(r, group) {
+  const block = el('section', 'duplicate-block'); block.setAttribute('aria-label', t(`dup_${group.kind}`));
+  block.append(el('strong', '', t(`dup_${group.kind}`)), el('span', 'hint', t('dupRedundant', count(group.members.length), size(group.redundant_bytes))));
+  const list = el('ul', 'batch-list');
+  for (const index of group.members) {
+    const member = state.records[index]; if (!member) continue;
+    const item = el('li'), open = el('button', 'link-button path', pathText(member)); open.type = 'button'; open.disabled = member === r;
+    open.addEventListener('click', () => { if (!state.filtered.includes(member)) { state.mode = 'duplicates'; refresh(true); } state.page = Math.floor(state.filtered.indexOf(member) / PAGE_SIZE); renderList(); selectRecord(member); });
+    item.append(open, el('span', '', member.image ? `${count(member.image.width)} × ${count(member.image.height)}` : ''), sizeNode(member.resource?.bytes, 'number')); list.append(item);
+  }
+  block.append(list, el('p', 'hint', t('dupHint'))); return block;
 }
 
 function warningDetail(c, kind) {

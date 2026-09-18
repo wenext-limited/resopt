@@ -201,6 +201,9 @@ pub struct ResourceAnalysis {
     pub smallest_candidate: Option<usize>,
     pub original_preview: Option<PathBuf>,
     pub original_artifact: Option<PathBuf>,
+    /// Scale-invariant fingerprint used to find duplicate and resized images.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<crate::similarity::Fingerprint>,
 }
 
 impl ResourceAnalysis {
@@ -215,6 +218,7 @@ impl ResourceAnalysis {
             smallest_candidate: None,
             original_preview: None,
             original_artifact: None,
+            fingerprint: None,
         }
     }
 
@@ -237,6 +241,10 @@ pub struct AnalysisReport {
     pub status_counts: BTreeMap<String, usize>,
     /// Sum of recommended candidates only; warning candidates are excluded.
     pub potential_source_bytes_saved: u64,
+    /// Images that show the same picture (identical, resized or near-duplicate),
+    /// excluding intended variants such as `@2x`/`@3x` or density folders.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub similar_groups: Vec<crate::similarity::SimilarGroup>,
     /// Analysis stopped early; unfinished resources are `not_analyzed`.
     #[serde(default)]
     pub cancelled: bool,
@@ -514,6 +522,15 @@ pub(crate) fn analyze_with_observer(
     if let Some(cache) = &cache {
         let _ = cache.prune(crate::cache::DEFAULT_MAX_BYTES);
     }
+    let similar_groups = crate::similarity::group(&resources);
+    // Fingerprints exist for grouping (and the cache); the report keeps the groups.
+    let resources: Vec<_> = resources
+        .into_iter()
+        .map(|resource| ResourceAnalysis {
+            fingerprint: None,
+            ..resource
+        })
+        .collect();
     let mut report = AnalysisReport {
         schema_version: 2,
         root: inventory.root.clone(),
@@ -528,6 +545,7 @@ pub(crate) fn analyze_with_observer(
         resources,
         status_counts,
         potential_source_bytes_saved: savings,
+        similar_groups,
         cancelled: control.is_cancelled(),
         performance: None,
     };

@@ -56,6 +56,7 @@ pub(crate) fn meta(report: &AnalysisReport) -> serde_json::Value {
         "options": report.options,
         "savings": report.potential_source_bytes_saved,
         "cancelled": report.cancelled,
+        "similarGroups": report.similar_groups,
         "performance": report.performance,
         "projectKinds": report.inventory.project_kinds,
         "androidMinSdk": report.inventory.android_min_sdk,
@@ -185,7 +186,7 @@ fn toolbar() -> Markup {
     html! {
         section.toolbar aria-label="Filters" {
             div.modes role="group" aria-label="View" {
-                @for mode in ["candidates", "warnings", "applied", "images", "unsupported", "failed", "all"] {
+                @for mode in ["candidates", "warnings", "duplicates", "applied", "images", "unsupported", "failed", "all"] {
                     button.mode type="button" data-mode=(mode) aria-pressed="false" {
                         span data-i18n={ "mode" (mode[..1].to_uppercase()) (mode[1..]) } {}
                         " " span.mode-count id={ "mode-" (mode) } {}

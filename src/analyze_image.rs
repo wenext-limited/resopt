@@ -172,6 +172,7 @@ fn analyze_into(
         image_backend::decode(original, options.max_pixels)
     })?;
     result.image = Some(decoded.info.clone());
+    result.fingerprint = crate::similarity::fingerprint(&decoded);
     if decoded.info.frames != 1 {
         result.issues.push("multiple_frames_not_transcoded".into());
         return Ok(());

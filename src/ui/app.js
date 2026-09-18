@@ -118,7 +118,7 @@ function renderSummary() {
   setStat('stat-applied', size(applied), t('exactBytes', count(applied)));
   const options = state.meta?.options;
   $('scope-note').textContent = options ? t('scope', size(rows.reduce((n, r) => n + (r.resource?.bytes || 0), 0)), (options.qualities || []).join(' / '), options.min_score ?? '—') : '';
-  const modes = { candidates: opportunities.length, warnings: rows.filter(hasWarningCandidate).length, applied: rows.filter(isApplied).length,
+  const modes = { candidates: opportunities.length, warnings: rows.filter(hasWarningCandidate).length, duplicates: duplicateGroups().size, applied: rows.filter(isApplied).length,
     images: rows.filter(r => r.resource?.kind === 'image').length, unsupported: rows.filter(r => ['unsupported', 'inventory_only'].includes(r.status)).length,
     failed: rows.filter(r => r.status === 'failed').length, all: rows.length };
   for (const [mode, value] of Object.entries(modes)) $(`mode-${mode}`).textContent = count(value);
@@ -134,8 +134,14 @@ function renderSummary() {
 }
 
 // ---- list ---------------------------------------------------------------------
+// Report index -> position of its duplicate group (groups are sorted by redundant bytes).
+function duplicateGroups() {
+  const groups = state.meta?.similarGroups || [];
+  if (state.groupSource !== groups) { state.groupSource = groups; state.groupOf = new Map(); groups.forEach((g, rank) => g.members.forEach(i => state.groupOf.set(i, rank))); }
+  return state.groupOf;
+}
 const MODE_FILTERS = {
-  candidates: r => recommendedSavings(r) > 0, warnings: hasWarningCandidate, applied: isApplied,
+  candidates: r => recommendedSavings(r) > 0, warnings: hasWarningCandidate, duplicates: r => duplicateGroups().has(indexOf(r)), applied: isApplied,
   images: r => r.resource?.kind === 'image', unsupported: r => ['unsupported', 'inventory_only'].includes(r.status),
   failed: r => r.status === 'failed', all: () => true,
 };
@@ -146,7 +152,9 @@ function applyFilters() {
     && query.every(q => `${pathText(r)} ${r.resource?.format} ${r.resource?.kind}`.toLocaleLowerCase().includes(q)));
   const by = { savings: (a, b) => recommendedSavings(b) - recommendedSavings(a), size: (a, b) => (b.resource?.bytes || 0) - (a.resource?.bytes || 0),
     name: (a, b) => basename(pathText(a)).localeCompare(basename(pathText(b))), score: (a, b) => lowestScore(a) - lowestScore(b) }[sort];
-  state.filtered.sort((a, b) => by(a, b) || pathText(a).localeCompare(pathText(b)));
+  // Members of one duplicate group stay adjacent, largest group first.
+  const rank = state.mode === 'duplicates' ? (a, b) => duplicateGroups().get(indexOf(a)) - duplicateGroups().get(indexOf(b)) : () => 0;
+  state.filtered.sort((a, b) => rank(a, b) || by(a, b) || pathText(a).localeCompare(pathText(b)));
 }
 // `reset` moves to the first page and selection; live updates keep the user's place.
 function refresh(reset) {

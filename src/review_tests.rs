@@ -98,9 +98,11 @@ fn fixture(format: &str, catalog: bool) -> (tempfile::TempDir, tempfile::TempDir
             smallest_candidate: Some(0),
             original_preview: None,
             original_artifact: None,
+            fingerprint: None,
         }],
         status_counts: BTreeMap::new(),
         potential_source_bytes_saved: 0,
+        similar_groups: vec![],
         cancelled: false,
         performance: None,
     };
