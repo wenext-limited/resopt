@@ -1,6 +1,6 @@
 # Development
 
-The CLI is Rust. Maud generates the report HTML embedded in the binary. End users do not need a frontend toolchain.
+The CLI is Rust. Maud generates the HTML shell and the UI scripts in `src/ui/` are embedded in the binary, so end users need no frontend toolchain. See [architecture.md](architecture.md) for module responsibilities and invariants, and [acceptance.md](acceptance.md) for the requirement checklist.
 
 ## Native checks
 
@@ -11,6 +11,30 @@ cargo test --locked --workspace --all-targets
 cargo test --locked --workspace --doc
 node --test tests/report-ui.cjs
 ```
+
+Tests that need platform tools skip themselves when the tool is missing: ImageIO tests are macOS-only, and the AAPT2 test runs when Android SDK build-tools are installed (`ANDROID_HOME` or the default SDK location).
+
+### Real-browser verification
+
+`tests/browser/e2e.mjs` drives the embedded UI in headless Chrome through the DevTools protocol (Node 22+, no npm packages). It **modifies the project it is given**, so always pass a disposable copy:
+
+```sh
+cargo build --release
+cp -R /path/to/sample-project /tmp/resopt-e2e-project
+node tests/browser/e2e.mjs target/release/resopt /tmp/resopt-e2e-project /tmp/resopt-e2e-shots
+```
+
+It checks live results, filters, keyboard use, control labels, themes, language switching, the comparison dialog, warning confirmation, single apply/restore, batch apply, restore-all (byte-exact project snapshot afterwards), phone-width layout, reduced motion and the absence of script errors. Set `CHROME_BIN` if Chrome is not in a standard location.
+
+### SVGA corpus check
+
+```sh
+RESOPT_SVGA_SAMPLES=/path/to/svga/files cargo test --release --lib svga_samples -- --ignored --nocapture
+```
+
+### Working with real projects
+
+Analysis is read-only, but apply/restore tests must run on copies. Never point `apply`, the browser test or a batch at a working checkout you care about without a clean VCS state.
 
 ## Browser/WASM edition
 

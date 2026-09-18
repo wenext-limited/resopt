@@ -80,6 +80,10 @@ export function createNativeApi(binary: string, origin: string) {
           String(MAX_PIXELS),
           "--png-level",
           "1",
+          // One explicit quality is being compared; the caller judges the score.
+          "--min-score",
+          "0",
+          "--no-cache",
           "--json",
         ],
         { stdout: "ignore", stderr: "pipe" },
@@ -117,8 +121,9 @@ export function createNativeApi(binary: string, origin: string) {
         candidates
           .filter((c: any) => c.valid && c.artifact)
           .sort((a: any, b: any) => a.bytes - b.bytes)[0] ||
-        candidates.find((c: any) => c.valid);
-      if (!candidate?.valid)
+        // Candidates that are not smaller are reported without being verified.
+        candidates.find((c: any) => !c.artifact && !c.rejection);
+      if (!candidate || (candidate.artifact && !candidate.valid))
         return fail("候选未通过透明度或编码校验，请换一个质量档位", 422);
       if (!candidate.artifact)
         return Response.json({
