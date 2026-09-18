@@ -459,16 +459,19 @@ fn start_batch(app: &Arc<App>, plan: Option<BatchPlan>) -> Result<()> {
         "another batch is already running"
     );
     app.batch_cancel.store(false, Ordering::SeqCst);
+    // Reset before returning, so a client that polls right after its request is
+    // accepted never reads the outcome of the previous batch.
+    *app.batch_status.lock().unwrap_or_else(|e| e.into_inner()) = BatchStatus {
+        running: true,
+        total: plan.as_ref().map_or(0, |p| p.items.len()),
+        ..Default::default()
+    };
     let app = app.clone();
     std::thread::spawn(move || {
         if let Some(review) = app.review.get() {
             match plan {
                 Some(plan) => batch::run(review, &plan, &app.batch_status, &app.batch_cancel),
                 None => {
-                    *app.batch_status.lock().unwrap_or_else(|e| e.into_inner()) = BatchStatus {
-                        running: true,
-                        ..Default::default()
-                    };
                     let status = batch::restore_all(review, &app.batch_cancel);
                     *app.batch_status.lock().unwrap_or_else(|e| e.into_inner()) = status;
                 }
