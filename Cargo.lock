@@ -1299,9 +1299,9 @@ dependencies = [
 
 [[package]]
 name = "xcassets"
-version = "0.2.0"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8cdba5941527d0541f884cab1974b7981e6a487bccbc2b3ba5b20981da64352b"
+checksum = "75298e0cb65ce3b575d2975cd6e07303cb7f274f32287770294eb49a852288cb"
 dependencies = [
  "serde",
  "serde_json",

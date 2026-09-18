@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Use xcassets 0.3 rendition indexing and filename-editing APIs; remove duplicate catalog traversal and metadata-editing logic.
+
 - Show completed savings while project analysis is still running; reuse quality-scoring reference data and byte-identical image results.
 - Add opt-in native WebP candidates with `--webp`, including transparency checks and reversible same-format updates.
 - Keep Alpha-warning candidates for review, download, and explicitly approved application; retain source-integrity and structural checks.

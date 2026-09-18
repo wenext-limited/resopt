@@ -287,7 +287,6 @@ impl Review {
             let contents = contained_file(&self.report.root, &asset.contents_path)?;
             let bytes = read_verified(&contents, &asset.contents_sha256)?;
             if crossing {
-                let mut json: serde_json::Value = serde_json::from_slice(&bytes)?;
                 let filename = rel
                     .file_name()
                     .and_then(|v| v.to_str())
@@ -296,28 +295,12 @@ impl Review {
                     .file_name()
                     .and_then(|v| v.to_str())
                     .context("non-UTF8 target")?;
-                let images = json["images"]
-                    .as_array_mut()
-                    .context("missing catalog images")?;
-                ensure!(
-                    !images
-                        .iter()
-                        .any(|image| image["filename"] == replacement
-                            && image["filename"] != filename),
-                    "target already referenced"
-                );
-                let mut count = 0;
-                for image in images {
-                    if image["filename"] == filename {
-                        image["filename"] = replacement.into();
-                        count += 1;
-                    }
-                }
-                ensure!(count > 0, "source no longer referenced");
+                let replacement =
+                    xcassets::replace_rendition_filename(&bytes, filename, replacement)?;
                 edits.push((
                     asset.contents_path.clone(),
                     Some(bytes),
-                    Some(serde_json::to_vec_pretty(&json)?),
+                    Some(replacement.contents),
                 ));
             }
         } else if crossing {

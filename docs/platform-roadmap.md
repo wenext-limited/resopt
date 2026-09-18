@@ -1,21 +1,6 @@
-# Platform and dependency assessment
+# Android support assessment
 
 This assessment distinguishes current behavior from proposed work. It does not imply build-target resolution or Android-safe cross-format application.
-
-## Simplifying resopt with xcassets
-
-The checked `xcassets` API is 0.2.0. It provides a typed catalog tree (`parse_catalog`), a lookup-name index (`index_asset_references`), diagnostics, raw JSON, and an optional parallel parser.
-
-The existing reference index describes logical names, not individual image filenames. resopt therefore still recursively walks nodes, serializes typed contents back into JSON to detect special properties, rereads Contents.json for change detection, and implements filename replacement itself.
-
-Two additions would have a clear boundary:
-
-1. A **rendition iterator/index** over an already parsed catalog. Return the image-set path, Contents.json path, filename, idiom/scale/appearance, AppIcon classification, and resizing metadata. Keep unknown JSON fields accessible. This removes resopt's generic tree traversal and serde round trips without prescribing optimization policy.
-2. A **pure filename replacement function** taking Contents.json bytes plus old/new basenames. Validate basenames and collisions, update every matching rendition, preserve unknown fields, and return changed bytes plus replacement count. Do not write files. This can replace the JSON-editing block in resopt's review preparation.
-
-Leave hashing, stale-file detection, ignored paths, image encoding, source confinement, backups, and transactional application in resopt. Those are optimizer responsibilities, and moving them into an Apple catalog parser would make Android support harder.
-
-A follow-up API should be additive and tested against duplicate renditions, RTL variants, appearance variants, resizing keys, AppIcons, opaque nodes, malformed JSON, and unknown properties. Integrate against a published compatible version; do not introduce a developer-machine path dependency. No xcassets source or package was changed during this assessment.
 
 ## Android evidence
 

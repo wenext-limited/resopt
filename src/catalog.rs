@@ -7,7 +7,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use walkdir::WalkDir;
-use xcassets::Node;
+use xcassets::{RenditionSet, RenditionSetKind};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Asset {
@@ -103,7 +103,16 @@ pub(crate) fn scan_filtered(
                             diagnostic.message
                         ));
                     }
-                    visit(&report.catalog.children, entry.path(), &mut inventory)?;
+                    let index = xcassets::index_renditions(&report.catalog);
+                    for path in index.unsupported_nodes {
+                        inventory.diagnostics.push(format!(
+                            "unsupported catalog node: {}",
+                            entry.path().join(path).display()
+                        ));
+                    }
+                    for set in index.sets {
+                        visit_set(&set, entry.path(), &mut inventory)?;
+                    }
                 }
                 Err(error) => inventory.diagnostics.push(error.to_string()),
             }
@@ -147,69 +156,31 @@ pub(crate) fn excluded(name: &str) -> bool {
     )
 }
 
-fn visit(nodes: &[Node], catalog: &Path, inventory: &mut Inventory) -> Result<()> {
-    for node in nodes {
-        match node {
-            Node::Group(group) => visit(&group.children, catalog, inventory)?,
-            Node::ImageSet(set) => {
-                visit_set(&set.contents, &set.relative_path, false, catalog, inventory)?
-            }
-            Node::AppIconSet(set) => {
-                visit_set(&set.contents, &set.relative_path, true, catalog, inventory)?
-            }
-            Node::Opaque(node) => inventory.diagnostics.push(format!(
-                "unsupported catalog node: {}",
-                catalog.join(&node.relative_path).display()
-            )),
-            Node::ColorSet(_) => {}
-        }
-    }
-    Ok(())
-}
-
-fn visit_set<T: Serialize + serde::de::DeserializeOwned + PartialEq>(
-    contents: &Option<T>,
-    relative: &Path,
-    app_icon: bool,
-    catalog: &Path,
-    inventory: &mut Inventory,
-) -> Result<()> {
-    let Some(contents) = contents else {
-        return Ok(());
-    };
-    let raw = serde_json::to_value(contents)?;
-    let Some(images) = raw.get("images").and_then(|value| value.as_array()) else {
-        return Ok(());
-    };
-    let directory = catalog.join(relative);
+fn visit_set(set: &RenditionSet<'_>, catalog: &Path, inventory: &mut Inventory) -> Result<()> {
+    let directory = catalog.join(set.relative_path);
     let contents_path = directory.join("Contents.json");
     let relative_contents = contents_path.strip_prefix(&inventory.root)?.to_path_buf();
     let contents_bytes = fs::read(&contents_path)?;
     ensure!(
-        serde_json::from_slice::<T>(&contents_bytes)? == *contents,
+        set.matches_contents(&contents_bytes)?,
         "catalog changed while scanning: {}",
         contents_path.display()
     );
     let contents_hash = hash(&contents_bytes);
-    let special = if app_icon {
+    let special = if set.kind == RenditionSetKind::AppIcon {
         Some("app_icon")
-    } else if has_key(&raw, "resizing") {
+    } else if set.has_resizing {
         Some("resizing")
     } else {
         None
     };
-    for image in images {
-        let Some(filename) = image.get("filename").and_then(|value| value.as_str()) else {
+    for image in set.images {
+        let Some(filename) = image.filename.as_deref() else {
             continue;
         };
         // Catalog rendition filenames must be a single basename.
         let filename_path = Path::new(filename);
-        if filename_path.components().count() != 1
-            || !matches!(
-                filename_path.components().next(),
-                Some(std::path::Component::Normal(_))
-            )
-        {
+        if !xcassets::is_rendition_filename(filename) {
             inventory.diagnostics.push(format!(
                 "unsafe rendition filename in {}: {filename}",
                 contents_path.display()
@@ -247,14 +218,4 @@ fn visit_set<T: Serialize + serde::de::DeserializeOwned + PartialEq>(
         });
     }
     Ok(())
-}
-
-fn has_key(value: &serde_json::Value, key: &str) -> bool {
-    match value {
-        serde_json::Value::Object(values) => {
-            values.contains_key(key) || values.values().any(|value| has_key(value, key))
-        }
-        serde_json::Value::Array(values) => values.iter().any(|value| has_key(value, key)),
-        _ => false,
-    }
 }
