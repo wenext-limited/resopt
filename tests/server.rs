@@ -419,3 +419,120 @@ fn web_rejects_existing_or_in_project_output_before_startup() {
         assert!(result.stdout.is_empty());
     }
 }
+
+#[test]
+fn analysis_can_be_cancelled_and_still_yields_a_consistent_reviewable_report() {
+    let base = tempfile::tempdir().unwrap();
+    let root = base.path().join("project");
+    fs::create_dir(&root).unwrap();
+    for i in 0..48_u8 {
+        let mut bytes = Vec::new();
+        let mut encoder = png::Encoder::new(&mut bytes, 256, 256);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_compression(png::Compression::NoCompression);
+        let data: Vec<u8> = (0..256 * 256_u32)
+            .flat_map(|p| [(p % 251) as u8, (p / 256) as u8, i, 255])
+            .collect();
+        encoder
+            .write_header()
+            .unwrap()
+            .write_image_data(&data)
+            .unwrap();
+        fs::write(root.join(format!("image-{i}.png")), bytes).unwrap();
+    }
+    let out = base.path().join("analysis");
+    let mut server = Server::new(
+        Command::new(env!("CARGO_BIN_EXE_resopt"))
+            .args([
+                "web",
+                root.to_str().unwrap(),
+                "--out",
+                out.to_str().unwrap(),
+                "--no-open",
+                "--no-cache",
+                "--jobs",
+                "1",
+                "--png-level",
+                "4",
+            ])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let mut line = String::new();
+    server.stdout.read_line(&mut line).unwrap();
+    let origin = line
+        .trim()
+        .strip_prefix("Local web: ")
+        .unwrap()
+        .trim_end_matches('/')
+        .to_string();
+    let address = origin.strip_prefix("http://").unwrap();
+    let page = request(address, "GET", "/", "", "");
+    let token = page
+        .split("\"sessionToken\":\"")
+        .nth(1)
+        .unwrap()
+        .split('"')
+        .next()
+        .unwrap()
+        .to_string();
+    let session = format!("X-Resopt-Token: {token}\r\n");
+    let post = format!("Content-Type: application/json\r\nOrigin: {origin}\r\n{session}");
+    // Changes are refused while analysis is running.
+    let early = request(
+        address,
+        "POST",
+        "/api/batch/preview",
+        &post,
+        r#"{"policy":{}}"#,
+    );
+    assert!(early.starts_with("HTTP/1.1 409"), "{early}");
+    let cancelled = request(address, "POST", "/api/cancel", &post, "{}");
+    assert!(cancelled.starts_with("HTTP/1.1 200"), "{cancelled}");
+    let deadline = std::time::Instant::now() + Duration::from_secs(120);
+    loop {
+        let response = request(address, "GET", "/api/results?after=100000", &session, "");
+        if response.contains("\"phase\":\"ready\"") {
+            break;
+        }
+        assert!(!response.contains("\"phase\":\"failed\""), "{response}");
+        assert!(std::time::Instant::now() < deadline, "cancel timed out");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let report: serde_json::Value =
+        serde_json::from_slice(&fs::read(out.join("analysis.json")).unwrap()).unwrap();
+    assert_eq!(report["cancelled"], true);
+    let rows = report["resources"].as_array().unwrap();
+    assert_eq!(rows.len(), 48);
+    let skipped = rows
+        .iter()
+        .filter(|r| r["status"] == "not_analyzed")
+        .count();
+    assert!(
+        skipped > 0,
+        "cancelling early should leave unfinished files"
+    );
+    for row in rows {
+        let status = row["status"].as_str().unwrap();
+        assert!(
+            matches!(
+                status,
+                "not_analyzed" | "candidates_available" | "inspected"
+            ),
+            "{status}"
+        );
+        if status == "not_analyzed" {
+            assert!(row["candidates"].as_array().unwrap().is_empty());
+        }
+    }
+    // Finished rows stay reviewable after a cancelled run.
+    let plan = request(
+        address,
+        "POST",
+        "/api/batch/preview",
+        &post,
+        r#"{"policy":{}}"#,
+    );
+    assert!(plan.starts_with("HTTP/1.1 200"), "{plan}");
+}

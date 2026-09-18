@@ -260,7 +260,8 @@ impl Cache {
             let template = template_for(&relative, index)?;
             let bytes = fs::read(out.join(&relative))?;
             let name = format!("f{}", files.len());
-            write_new(&staging.path().join(&name), &bytes)?;
+            // No fsync: a torn file fails its hash check and discards the entry.
+            crate::filesystem::write_artifact(&staging.path().join(&name), &bytes)?;
             files.push(EntryFile {
                 template: template.clone(),
                 name,

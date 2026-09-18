@@ -112,7 +112,10 @@ impl ProjectLock {
             file.sync_all()?;
             // A previous holder may have unlinked this path between our open and
             // lock; only a lock on the file currently at `path` counts.
-            if fs::read(&path).is_ok_and(|current| current == token.as_bytes()) {
+            // Windows denies reads through a second handle while the lock is
+            // held, and keeps an unlinked name reserved until every handle is
+            // closed, so the re-check is both impossible and unnecessary there.
+            if cfg!(windows) || fs::read(&path).is_ok_and(|current| current == token.as_bytes()) {
                 return Ok(Self { file, path });
             }
         }
