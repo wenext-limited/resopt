@@ -3,15 +3,27 @@ use std::{
     fs,
     io::{BufRead, BufReader, Read, Write},
     net::TcpStream,
-    process::{Child, Command, Stdio},
+    process::{Child, ChildStdout, Command, Stdio},
     time::Duration,
 };
 
-struct Server(Child);
+struct Server {
+    child: Child,
+    // Keep the pipe open until the child exits. Dropping a temporary reader
+    // after the first line can interrupt the rest of the banner on Windows.
+    stdout: BufReader<ChildStdout>,
+}
+impl Server {
+    fn new(mut child: Child) -> Self {
+        let stdout = BufReader::new(child.stdout.take().expect("piped server stdout"));
+        Self { child, stdout }
+    }
+}
 impl Drop for Server {
     fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+        // Fields, including stdout, are dropped only after the child is reaped.
     }
 }
 
@@ -99,7 +111,7 @@ fn loopback_api_requires_session_and_origin_and_applies_only_selected_candidate(
         serde_json::to_vec(&report).unwrap(),
     )
     .unwrap();
-    let mut server = Server(
+    let mut server = Server::new(
         Command::new(env!("CARGO_BIN_EXE_resopt"))
             .args(["serve", report_dir.to_str().unwrap(), "--port", "0"])
             .stdout(Stdio::piped())
@@ -107,9 +119,13 @@ fn loopback_api_requires_session_and_origin_and_applies_only_selected_candidate(
             .unwrap(),
     );
     let mut line = String::new();
-    BufReader::new(server.0.stdout.take().unwrap())
-        .read_line(&mut line)
-        .unwrap();
+    server.stdout.read_line(&mut line).unwrap();
+    let mut project_line = String::new();
+    server.stdout.read_line(&mut project_line).unwrap();
+    assert!(project_line.starts_with("Project: "), "{project_line}");
+    let mut ready_line = String::new();
+    server.stdout.read_line(&mut ready_line).unwrap();
+    assert!(ready_line.starts_with("Stop with Ctrl-C."), "{ready_line}");
     let origin = line
         .trim()
         .strip_prefix("Review server: ")
