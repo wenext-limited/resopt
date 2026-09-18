@@ -18,7 +18,37 @@ pub struct Resource {
     pub extension: String,
     pub extension_mismatch: bool,
     pub origin: String,
+    /// Reason the file is excluded from every optimization, if any.
     pub conversion_exclusion: Option<String>,
+    /// Reason the file must keep its encoded format; same-format lossless
+    /// optimization remains available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub format_lock: Option<String>,
+    /// Android resource semantics for files under `res/` or `assets/`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub android: Option<crate::android::AndroidResource>,
+    /// `optimizable`, `excluded` or `unsupported` on this platform and build.
+    #[serde(default)]
+    pub support: String,
+}
+
+impl Resource {
+    #[cfg(test)]
+    pub(crate) fn for_tests(path: &str, format: &str) -> Self {
+        Self {
+            path: path.into(),
+            bytes: 0,
+            kind: kind(format).into(),
+            format: format.into(),
+            extension: format.into(),
+            extension_mismatch: false,
+            origin: "loose_file".into(),
+            conversion_exclusion: None,
+            format_lock: None,
+            android: None,
+            support: "optimizable".into(),
+        }
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -30,6 +60,12 @@ pub struct ResourceInventory {
     pub skipped_source_or_tooling_files: usize,
     pub excluded_directories: Vec<PathBuf>,
     pub diagnostics: Vec<String>,
+    /// Detected project kinds: `xcode`, `swift_package`, `android`, or `directory`.
+    #[serde(default)]
+    pub project_kinds: Vec<String>,
+    /// Lowest declared Android `minSdk`, when it could be read from build files.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub android_min_sdk: Option<crate::android_project::MinSdk>,
 }
 
 /// Inventory all files other than recognized source/tooling files and build/VCS
@@ -51,13 +87,15 @@ pub fn inventory_with_options(
         .map(|a| (a.path.clone(), a))
         .collect();
     let mut report = ResourceInventory {
-        schema_version: 2,
+        schema_version: 3,
         root: catalogs.root,
         catalogs: catalogs.catalogs,
         assets: vec![],
         skipped_source_or_tooling_files: 0,
         excluded_directories: vec![],
         diagnostics: catalogs.diagnostics,
+        project_kinds: vec![],
+        android_min_sdk: None,
     };
     let mut walk = WalkDir::new(&report.root).follow_links(false).into_iter();
     while let Some(entry) = walk.next() {
@@ -153,21 +191,12 @@ pub fn inventory_with_options(
             "loose_file"
         }
         .to_string();
-        let conversion_exclusion = if relative
-            .file_name()
-            .is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().ends_with(".9.png"))
-        {
-            Some("android_nine_patch".into())
-        } else if (android_resource_path(&relative)
-            && relative
-                .components()
-                .any(|p| p.as_os_str().to_string_lossy().starts_with("mipmap")))
-            || relative.components().any(|p| {
-                Path::new(p.as_os_str())
-                    .extension()
-                    .is_some_and(|e| e == "appiconset")
-            })
-        {
+        let android = crate::android::classify(&relative);
+        let conversion_exclusion = if relative.components().any(|p| {
+            Path::new(p.as_os_str())
+                .extension()
+                .is_some_and(|e| e == "appiconset")
+        }) {
             Some("app_icon".into())
         } else {
             referenced
@@ -175,6 +204,18 @@ pub fn inventory_with_options(
                 .filter(|r| r.as_str() == "resizing")
                 .cloned()
         };
+        let format_lock = android
+            .as_ref()
+            .and_then(|a| a.format_lock())
+            .map(str::to_string);
+        let support = if conversion_exclusion.is_some() {
+            "excluded"
+        } else if crate::capabilities::can_optimize(&kind, &format) {
+            "optimizable"
+        } else {
+            "unsupported"
+        }
+        .to_string();
         report.assets.push(Resource {
             path: relative,
             bytes: entry.metadata()?.len(),
@@ -184,7 +225,14 @@ pub fn inventory_with_options(
             extension_mismatch,
             origin,
             conversion_exclusion,
+            format_lock,
+            android,
+            support,
         });
+    }
+    report.project_kinds = project_kinds(&filter, &report);
+    if report.project_kinds.iter().any(|kind| kind == "android") {
+        report.android_min_sdk = crate::android_project::detect_min_sdk(&report.root, &filter);
     }
     report.assets.sort_by(|a, b| a.path.cmp(&b.path));
     report.excluded_directories.sort();
@@ -265,7 +313,7 @@ fn kind(format: &str) -> &'static str {
         "svg" | "pdf" => "vector",
         "mp4" | "mov" | "m4v" | "webm" | "avi" => "video",
         "mp3" | "m4a" | "aac" | "wav" | "ogg" | "caf" | "flac" | "aiff" => "audio",
-        "svga" | "vap" | "tcmp4" | "lottie" => "animation",
+        "svga" | "vap" | "tcmp4" | "lottie" | "pag" => "animation",
         "ttf" | "otf" | "woff" | "woff2" => "font",
         "zip" | "gz" | "br" | "7z" | "rar" | "tar" => "archive",
         "xcstrings" | "strings" | "stringsdict" => "localization",
@@ -323,16 +371,30 @@ pub(crate) fn bounded_read(path: &Path) -> Result<Vec<u8>> {
     Ok(bytes)
 }
 
-/// Android resource paths carry build-time qualifier and resource-ID semantics.
-pub(crate) fn android_resource_path(path: &Path) -> bool {
-    let names: Vec<_> = path
-        .components()
-        .map(|p| p.as_os_str().to_string_lossy())
-        .collect();
-    names.windows(2).any(|p| {
-        p[0] == "res"
-            && ["drawable", "mipmap", "raw"]
-                .iter()
-                .any(|kind| p[1] == *kind || p[1].starts_with(&format!("{kind}-")))
-    })
+/// Project kinds present under the scan root. A directory can hold several.
+fn project_kinds(
+    filter: &crate::scan_options::ScanFilter,
+    report: &ResourceInventory,
+) -> Vec<String> {
+    let mut kinds = std::collections::BTreeSet::new();
+    for path in filter.paths() {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        if name.ends_with(".xcodeproj") || name.ends_with(".xcworkspace") {
+            kinds.insert("xcode");
+        } else if name == "Package.swift" {
+            kinds.insert("swift_package");
+        } else if name == "AndroidManifest.xml" {
+            kinds.insert("android");
+        }
+    }
+    if report.catalogs > 0 && !kinds.contains("swift_package") {
+        kinds.insert("xcode");
+    }
+    if report.assets.iter().any(|a| a.android.is_some()) {
+        kinds.insert("android");
+    }
+    if kinds.is_empty() {
+        kinds.insert("directory");
+    }
+    kinds.into_iter().map(str::to_string).collect()
 }

@@ -15,7 +15,7 @@ pub fn refresh_report(directory: impl AsRef<Path>) -> Result<PathBuf> {
     let data = contained_file(&directory, Path::new("analysis.json"))?;
     let report: AnalysisReport = serde_json::from_slice(&bounded_read(&data)?)?;
     ensure!(
-        report.schema_version == 1,
+        matches!(report.schema_version, 1 | 2),
         "unsupported analysis schema version"
     );
     let html = render_html(&report)?;
@@ -30,97 +30,132 @@ pub fn refresh_report(directory: impl AsRef<Path>) -> Result<PathBuf> {
 }
 
 pub(crate) fn render_html(report: &AnalysisReport) -> Result<String> {
-    render_page(report, None)
+    let payload = serde_json::json!({
+        "sessionToken": null,
+        "meta": meta(report),
+        "resources": report.resources,
+    });
+    Ok(page(&script_safe_json(&payload)?).into_string())
 }
 
-pub(crate) fn render_page(report: &AnalysisReport, token: Option<&str>) -> Result<String> {
-    let payload = serde_json::to_string(&serde_json::json!({
-        "root": report.root,
+/// The live application shell: rows arrive over the session API, so the page
+/// stays small no matter how large the project is.
+pub(crate) fn render_live_page(project: &Path, token: &str) -> Result<String> {
+    let payload = serde_json::json!({
         "sessionToken": token,
+        "meta": {"root": project},
+    });
+    Ok(page(&script_safe_json(&payload)?).into_string())
+}
+
+/// Report-level facts the UI needs besides the resource rows.
+pub(crate) fn meta(report: &AnalysisReport) -> serde_json::Value {
+    serde_json::json!({
+        "root": report.root,
+        "backend": report.backend,
         "options": report.options,
-        "resources": report.resources,
         "savings": report.potential_source_bytes_saved,
+        "cancelled": report.cancelled,
+        "performance": report.performance,
+        "projectKinds": report.inventory.project_kinds,
+        "androidMinSdk": report.inventory.android_min_sdk,
         "diagnostics": report.inventory.diagnostics,
         "excludedDirectories": report.inventory.excluded_directories,
-    }))?;
-    // An inert JSON script still ends at a literal </script>. Escape HTML
-    // delimiters before embedding data; UI code uses textContent for filenames.
-    let safe = payload
+    })
+}
+
+// An inert JSON script still ends at a literal </script>. Escape HTML
+// delimiters before embedding data; UI code uses textContent for filenames.
+fn script_safe_json(value: &serde_json::Value) -> Result<String> {
+    Ok(serde_json::to_string(value)?
         .replace('<', "\\u003c")
         .replace('>', "\\u003e")
         .replace('&', "\\u0026")
         .replace('\u{2028}', "\\u2028")
-        .replace('\u{2029}', "\\u2029");
-    Ok(page(&safe, token.is_some(), &report.backend).into_string())
+        .replace('\u{2029}', "\\u2029"))
 }
 
 use maud::{DOCTYPE, Markup, PreEscaped, html};
 
-fn page(data: &str, live: bool, backend: &str) -> Markup {
+const THEME_BOOTSTRAP: &str = "try{const t=localStorage.getItem('resopt-theme')||'system';document.documentElement.dataset.theme=t==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):t}catch{}";
+
+/// The UI sources share one scope; `start()` runs after every file is defined.
+fn script() -> String {
+    [
+        "'use strict';(() => {",
+        include_str!("ui/core.js"),
+        include_str!("ui/i18n.js"),
+        include_str!("ui/app.js"),
+        include_str!("ui/detail.js"),
+        include_str!("ui/batch.js"),
+        "start();})();",
+    ]
+    .join("\n")
+}
+
+fn page(data: &str) -> Markup {
     html! {
         (DOCTYPE)
-        html lang="zh-CN" {
+        html lang="en" {
             head {
                 meta charset="utf-8";
                 meta name="viewport" content="width=device-width, initial-scale=1";
-                title { "resopt · 资源分析" }
-                script { (PreEscaped("try{const t=localStorage.getItem('resopt-theme')||'system';document.documentElement.dataset.theme=t==='system'?(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light'):t}catch{}")) }
-                style { (PreEscaped(include_str!("report.css"))) }
+                title { "resopt · Resource analysis" }
+                script { (PreEscaped(THEME_BOOTSTRAP)) }
+                style { (PreEscaped(include_str!("ui/style.css"))) }
             }
             body {
+                a.skip-link href="#results" data-i18n="colResource" { "Resource" }
                 header {
                     div.brand {
                         span.mark aria-hidden="true" { i {} i {} i {} i {} }
-                        strong { "resopt" } span { "资源分析" }
+                        strong { "resopt" } span data-i18n="title" { "Resource analysis" }
                     }
                     div.header-meta {
-                        label.sr-only for="theme" { "页面主题" }
-                        select id="theme" aria-label="页面主题" {
-                            option value="system" { "跟随系统" }
-                            option value="light" { "浅色" }
-                            option value="dark" { "深色" }
+                        span.read-only id="session-mode" {}
+                        select id="language" aria-label="Language" data-i18n-label="language" {
+                            option value="en" { "English" }
+                            option value="zh-CN" { "简体中文" }
                         }
-                        span.read-only { @if live { "本地服务 · 逐张确认应用" } @else { "离线报告 · 仅供审阅" } }
-                        a href="analysis.json" target="_blank" rel="noopener" { "查看 JSON ↗" }
+                        select id="theme" aria-label="Theme" data-i18n-label="theme" {
+                            option value="system" data-i18n="themeSystem" { "System" }
+                            option value="light" data-i18n="themeLight" { "Light" }
+                            option value="dark" data-i18n="themeDark" { "Dark" }
+                        }
+                        a href="analysis.json" target="_blank" rel="noopener" data-i18n="json" { "View JSON ↗" }
                     }
                 }
                 main {
-                    p { "本地分析引擎：" (backend) }
+                    section.status id="status" role="status" aria-live="polite" {}
                     (overview())
                     (toolbar())
                     div.workspace {
-                        section.list-pane aria-label="资源清单" {
-                            div.list-head aria-hidden="true" { span { "资源" } span { "原始体积" } span { "可节省" } }
-                            div.results id="results" role="listbox" aria-label="资源列表" {}
+                        section.list-pane aria-label="Resources" data-i18n-label="statResources" {
+                            div.list-head aria-hidden="true" {
+                                span data-i18n="colResource" {} span data-i18n="colSize" {} span data-i18n="colSavings" {}
+                            }
+                            div.results id="results" role="listbox" tabindex="-1" aria-label="Resources" data-i18n-label="statResources" {}
                             div.pager {
                                 span id="range" role="status" aria-live="polite" {}
                                 div.pager-controls {
-                                    button.icon-button id="previous" aria-label="上一页" { "←" }
+                                    button.icon-button type="button" id="previous" aria-label="Previous page" data-i18n-label="previous" { "←" }
                                     span id="page-number" {}
-                                    button.icon-button id="next" aria-label="下一页" { "→" }
+                                    button.icon-button type="button" id="next" aria-label="Next page" data-i18n-label="next" { "→" }
                                 }
                             }
                         }
-                        aside.inspector id="inspector" aria-label="资源详情" {}
+                        aside.inspector id="inspector" aria-label="Details" {}
                     }
                     footer.footer {
-                        span { "体积采用 KiB / MiB（1024 进制），悬停可查看精确字节数。" }
-                        span { "仅统计源文件收益 · 不等于 App 包体收益" }
+                        span data-i18n="footerUnits" {}
+                        span data-i18n="footerScope" {}
                     }
                 }
-                dialog id="apply-dialog" aria-labelledby="apply-title" {
-                    h2 id="apply-title" { "确认优化图片" }
-                    p id="apply-description" {}
-                    p id="apply-note" { "原文件会备份，可在页面恢复。请先检查原尺寸候选的画质。" }
-                    div.dialog-actions {
-                        button id="apply-cancel" { "取消" }
-                        button.primary id="apply-confirm" { "确认并应用" }
-                    }
-                }
-                noscript { "请启用 JavaScript 查看筛选和图片对比，或打开同目录的 analysis.json。" }
-                // JSON is escaped for the script context by render_page, not HTML-escaped.
+                (dialogs())
+                noscript { "Enable JavaScript to filter resources and compare images, or open analysis.json next to this file." }
+                // JSON is escaped for the script context by script_safe_json, not HTML-escaped.
                 script type="application/json" id="report-data" { (PreEscaped(data)) }
-                script { (PreEscaped(include_str!("report.js"))) }
+                script { (PreEscaped(script())) }
             }
         }
     }
@@ -128,11 +163,17 @@ fn page(data: &str, live: bool, backend: &str) -> Markup {
 
 fn overview() -> Markup {
     html! {
-        section.summary aria-label="分析概览" {
-            @for (id, label) in [("total-count", "资源文件"), ("candidate-count", "有更小候选"), ("total-savings", "预估可节省")] {
+        section.summary aria-label="Overview" {
+            @for (id, label, accent) in [
+                ("stat-resources", "statResources", false),
+                ("stat-opportunities", "statOpportunities", false),
+                ("stat-savings", "statSavings", true),
+                ("stat-warnings", "statWarnings", false),
+                ("stat-applied", "statApplied", false),
+            ] {
                 div.stat {
-                    div.stat-label { (label) }
-                    div class={ "stat-value" @if id == "total-savings" { " accent" } } id=(id) { "—" }
+                    div.stat-label data-i18n=(label) {}
+                    div class={ "stat-value" @if accent { " accent" } } id=(id) { "—" }
                 }
             }
             p.summary-note id="scope-note" {}
@@ -142,11 +183,12 @@ fn overview() -> Markup {
 
 fn toolbar() -> Markup {
     html! {
-        section.toolbar aria-label="筛选资源" {
-            div.modes role="group" aria-label="资源范围" {
-                @for (mode, label) in [("candidates", "有候选"), ("warnings", "有警告"), ("images", "图片"), ("all", "全部")] {
-                    button class={ "mode" @if mode == "candidates" { " active" } } data-mode=(mode) aria-pressed=(if mode == "candidates" { "true" } else { "false" }) {
-                        (label) " " span id={ "mode-" (mode) } {}
+        section.toolbar aria-label="Filters" {
+            div.modes role="group" aria-label="View" {
+                @for mode in ["candidates", "warnings", "applied", "images", "unsupported", "failed", "all"] {
+                    button.mode type="button" data-mode=(mode) aria-pressed="false" {
+                        span data-i18n={ "mode" (mode[..1].to_uppercase()) (mode[1..]) } {}
+                        " " span.mode-count id={ "mode-" (mode) } {}
                     }
                 }
             }
@@ -155,16 +197,81 @@ fn toolbar() -> Markup {
                     circle cx="8.5" cy="8.5" r="5.5" stroke="currentColor" stroke-width="1.5" {}
                     path d="m13 13 4 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" {}
                 }
-                label.sr-only for="search" { "搜索资源" }
-                input type="search" id="search" placeholder="搜索文件名或路径…" autocomplete="off";
+                input type="search" id="search" autocomplete="off" aria-label="Search" data-i18n-label="search" data-i18n-placeholder="search";
             }
-            label.sr-only for="format-filter" { "原始格式" }
-            select id="format-filter" { option value="all" { "全部格式" } }
-            label.sr-only for="sort" { "排序方式" }
-            select id="sort" {
-                option value="savings" { "节省量 ↓" }
-                option value="size" { "原始体积 ↓" }
-                option value="name" { "文件名 A–Z" }
+            select id="format-filter" aria-label="Format" data-i18n-label="allFormats" {}
+            select id="sort" aria-label="Sort" {
+                option value="savings" data-i18n="sortSavings" {}
+                option value="size" data-i18n="sortSize" {}
+                option value="name" data-i18n="sortName" {}
+                option value="score" data-i18n="sortScore" {}
+            }
+            button.primary type="button" id="batch-open" hidden data-i18n="batch" {}
+            button type="button" id="restore-all-open" hidden data-i18n="restoreAll" {}
+        }
+    }
+}
+
+fn dialogs() -> Markup {
+    html! {
+        dialog id="apply-dialog" aria-labelledby="apply-title" {
+            h2 id="apply-title" {}
+            p id="apply-description" {}
+            p.hint id="apply-note" {}
+            div.dialog-actions {
+                button type="button" id="apply-cancel" data-i18n="cancelButton" {}
+                button.primary type="button" id="apply-confirm" {}
+            }
+        }
+        dialog.wide id="compare-dialog" aria-labelledby="compare-title" {
+            div.dialog-head {
+                h2 id="compare-title" data-i18n="compareTitle" {}
+                button type="button" id="compare-close" data-i18n="close" {}
+            }
+            p id="compare-caption" {}
+            input type="range" id="compare-slider" min="0" max="100" value="50" aria-label="Comparison position" data-i18n-label="compare";
+            div.compare-stage id="compare-stage" data-background="checker" {}
+            p.hint id="compare-note" {}
+        }
+        dialog id="batch-dialog" aria-labelledby="batch-title" {
+            div.dialog-head {
+                h2 id="batch-title" {}
+                button type="button" id="batch-close" data-i18n="close" {}
+            }
+            div id="batch-policy-view" {
+                p data-i18n="batchIntro" {}
+                @for (id, label, checked) in [
+                    ("batch-lossless", "batchLossless", true),
+                    ("batch-lossy", "batchLossy", false),
+                    ("batch-cross", "batchCross", false),
+                    ("batch-alpha", "batchAlpha", false),
+                    ("batch-quality", "batchQuality", false),
+                ] {
+                    label.check { input type="checkbox" id=(id) checked[checked]; span data-i18n=(label) {} }
+                }
+                label.field { span data-i18n="batchMinScore" {} input type="number" id="batch-min-score" min="0" max="100" step="1" inputmode="decimal"; }
+                label.check { input type="checkbox" id="batch-scope"; span id="batch-scope-label" {} }
+                p.status-warn id="batch-error" role="alert" {}
+                div.dialog-actions { button.primary type="button" id="batch-preview" data-i18n="batchPreview" {} }
+            }
+            div id="batch-plan-view" hidden {
+                p.summary-text id="batch-summary" {}
+                ul.batch-list id="batch-items" {}
+                div.dialog-actions {
+                    button type="button" id="batch-back" data-i18n="cancelButton" {}
+                    button.primary type="button" id="batch-confirm" {}
+                }
+            }
+            div id="batch-progress-view" hidden {
+                p id="batch-progress-text" role="status" aria-live="polite" {}
+                progress id="batch-bar" max="1" value="0" {}
+                p.status-warn id="batch-stopped" hidden data-i18n="batchStopped" {}
+                h3 id="batch-failures-title" hidden data-i18n="batchFailures" {}
+                ul.batch-list id="batch-failures" {}
+                div.dialog-actions {
+                    button type="button" id="batch-stop" data-i18n="batchStop" {}
+                    button.primary type="button" id="batch-done" hidden data-i18n="close" {}
+                }
             }
         }
     }

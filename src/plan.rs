@@ -226,29 +226,17 @@ pub fn restore(directory: impl AsRef<Path>) -> Result<ApplyReport> {
     execute(directory.as_ref(), true)
 }
 
-struct Lock(PathBuf);
-impl Drop for Lock {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
-}
-
 fn execute(directory: &Path, restoring: bool) -> Result<ApplyReport> {
     let directory = fs::canonicalize(directory)?;
-    let lock_path = directory.join(".lock");
-    write_new(
-        &lock_path,
-        format!("pid={}\n", std::process::id()).as_bytes(),
-    )
-    .context(
-        "plan locked; remove .lock only after confirming no resopt process is using this plan",
+    let _lock = crate::filesystem::ProjectLock::acquire(
+        directory.join(".lock"),
+        "plan is in use by another running resopt process",
     )?;
-    let _lock = Lock(lock_path);
     let plan = read_plan(&directory)?;
-    let root_lock_path = plan.root.join(".resopt.lock");
-    write_new(&root_lock_path, format!("pid={}\n", std::process::id()).as_bytes())
-        .context("project locked; remove .resopt.lock only after confirming no resopt process is modifying this project")?;
-    let _root_lock = Lock(root_lock_path);
+    let _root_lock = crate::filesystem::ProjectLock::acquire(
+        plan.root.join(".resopt.lock"),
+        "project is being modified by another running resopt process",
+    )?;
     let inventory = scan_with_options(
         &plan.root,
         crate::ScanOptions {

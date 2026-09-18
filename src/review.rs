@@ -1,7 +1,8 @@
 //! Single-image, journaled replacements for the local report UI.
 use crate::{
     AnalysisReport, ResourceAnalysis,
-    filesystem::{contained_file, hash, read_verified, replace, write_new},
+    analysis::WARNINGS,
+    filesystem::{ProjectLock, contained_file, hash, read_verified, replace, write_new},
     image_backend, optimizer,
     resources::bounded_read,
 };
@@ -36,8 +37,51 @@ struct Transaction {
     changes: Vec<Change>,
     #[serde(default)]
     references: Option<crate::references::ReferenceContext>,
+    /// Kept for journals written before warnings were generalized.
     #[serde(default)]
     approved_alpha_loss: bool,
+    /// Policy warnings the user explicitly accepted for this candidate.
+    #[serde(default)]
+    approved_warnings: Vec<String>,
+}
+
+/// Explicit user consent accompanying an apply request.
+#[derive(Debug, Clone, Default)]
+pub(crate) struct Approvals {
+    pub lossy: bool,
+    /// Warning identifiers from [`WARNINGS`] the user reviewed and accepted.
+    pub warnings: Vec<String>,
+}
+
+impl Approvals {
+    pub fn validate(&self) -> Result<()> {
+        for warning in &self.warnings {
+            ensure!(
+                WARNINGS.contains(&warning.as_str()),
+                "unknown warning approval: {warning}"
+            );
+        }
+        Ok(())
+    }
+    fn covers(&self, warning: &str) -> bool {
+        self.warnings.iter().any(|w| w == warning)
+    }
+}
+
+/// Why a format-locked Android file cannot change format.
+fn format_lock_explanation(lock: &str) -> &'static str {
+    match lock {
+        "android_nine_patch" => {
+            "Nine-patch images must stay PNG: AAPT reads the 1-pixel stretch and content markers from the .9.png source. Lossless PNG optimization keeps every marker pixel."
+        }
+        "android_launcher_icon" => {
+            "Launcher icons under mipmap-* keep their format: launchers and system UI render them outside the app, so only same-format lossless optimization is applied."
+        }
+        "android_raw_resource" => {
+            "Files in res/raw are read as raw byte streams, so their encoded format is part of the app's contract. Only same-format lossless optimization is applied."
+        }
+        _ => "This resource must keep its current format.",
+    }
 }
 
 type FileEdit = crate::references::Edit;
@@ -61,13 +105,6 @@ impl Prepared {
     }
 }
 
-struct Lock(PathBuf);
-impl Drop for Lock {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.0);
-    }
-}
-
 impl Review {
     pub fn open(directory: &Path) -> Result<Self> {
         let directory = fs::canonicalize(directory)?;
@@ -75,7 +112,10 @@ impl Review {
             &directory,
             Path::new("analysis.json"),
         )?)?)?;
-        ensure!(report.schema_version == 1, "unsupported analysis schema");
+        ensure!(
+            matches!(report.schema_version, 1 | 2),
+            "unsupported analysis schema"
+        );
         ensure!(
             report.root.is_absolute() && fs::canonicalize(&report.root)? == report.root,
             "project root moved"
@@ -89,10 +129,13 @@ impl Review {
             for candidate in &resource.candidates {
                 if let Some(path) = &candidate.artifact {
                     ensure!(path.starts_with("candidates"), "invalid artifact directory");
-                    artifact_hashes.insert(
-                        path.clone(),
-                        hash(&bounded_read(&contained_file(&directory, path)?)?),
-                    );
+                    // Reports record artifact hashes at analysis time; only
+                    // older reports need them computed when opened.
+                    let digest = match &candidate.sha256 {
+                        Some(digest) => digest.clone(),
+                        None => hash(&bounded_read(&contained_file(&directory, path)?)?),
+                    };
+                    artifact_hashes.insert(path.clone(), digest);
                 }
             }
         }
@@ -112,11 +155,20 @@ impl Review {
         Ok(self.directory.join("operations").join(index.to_string()))
     }
 
-    fn lock(&self) -> Result<Lock> {
-        let path = self.report.root.join(".resopt.lock");
-        write_new(&path, format!("pid={}\n", std::process::id()).as_bytes())
-            .context("project locked by another operation")?;
-        Ok(Lock(path))
+    fn lock(&self) -> Result<ProjectLock> {
+        ProjectLock::acquire(
+            self.report.root.join(".resopt.lock"),
+            "project is being modified by another running resopt operation; try again when it finishes",
+        )
+    }
+
+    pub(crate) fn min_sdk(&self) -> Option<u32> {
+        self.report.options.android_min_sdk.or(self
+            .report
+            .inventory
+            .android_min_sdk
+            .as_ref()
+            .map(|sdk| sdk.level))
     }
 
     pub fn states(&self) -> serde_json::Value {
@@ -149,27 +201,30 @@ impl Review {
         &self,
         index: usize,
         candidate_index: usize,
-        approve_lossy: bool,
-        approve_alpha_loss: bool,
+        approvals: &Approvals,
     ) -> Result<Prepared> {
+        approvals.validate()?;
         let resource = self.source(index)?;
         let candidate = resource
             .candidates
             .get(candidate_index)
             .context("unknown candidate")?;
+        ensure!(candidate.artifact.is_some(), "candidate not eligible");
+        if !candidate.valid {
+            ensure!(
+                candidate.is_warning(),
+                "candidate failed verification and cannot be applied: {}",
+                candidate.rejection.as_deref().unwrap_or("unknown reason")
+            );
+            for warning in candidate.required_warnings() {
+                ensure!(
+                    approvals.covers(&warning),
+                    "candidate has a warning that requires explicit approval: {warning}"
+                );
+            }
+        }
         ensure!(
-            (candidate.valid
-                || (approve_alpha_loss
-                    && candidate.lossy
-                    && matches!(
-                        candidate.rejection.as_deref(),
-                        Some("alpha_error_exceeds_policy" | "transparency_presence_changed")
-                    )))
-                && candidate.artifact.is_some(),
-            "candidate not eligible"
-        );
-        ensure!(
-            !candidate.lossy || approve_lossy,
+            !candidate.lossy || approvals.lossy,
             "lossy candidate requires explicit approval"
         );
         ensure!(
@@ -204,6 +259,17 @@ impl Review {
                 ensure!(!candidate.lossy, "PNG must be lossless");
                 optimizer::verify(&original, &optimized, self.report.options.png_reductions)?;
             }
+            "webp" if !candidate.lossy => {
+                ensure!(
+                    resource.resource.format == "png",
+                    "lossless WebP is verified against PNG sources only"
+                );
+                crate::webp_backend::verify_lossless(
+                    &original,
+                    &optimized,
+                    self.report.options.max_pixels,
+                )?;
+            }
             "jpeg" | "heic" | "webp" => {
                 ensure!(candidate.lossy, "JPEG/HEIC/WebP requires lossy approval");
                 let before = image_backend::decode(&original, self.report.options.max_pixels)?;
@@ -218,13 +284,38 @@ impl Review {
                         && (0.0..=1.0).contains(&self.report.options.max_alpha_error),
                     "invalid alpha policy"
                 );
+                // Both Alpha warnings describe one tradeoff: a change in presence is
+                // the extreme case of an Alpha error, so either approval covers both.
+                let alpha_approved = approvals.covers("alpha_error_exceeds_policy")
+                    || approvals.covers("transparency_presence_changed");
                 ensure!(
-                    approve_alpha_loss
+                    alpha_approved
                         || (delta.max_alpha_error <= self.report.options.max_alpha_error
                             && before.info.has_transparent_pixels
                                 == after.info.has_transparent_pixels),
                     "alpha verification failed"
                 );
+                // Reports from before the perceptual threshold carry no such policy.
+                ensure!(
+                    self.report.schema_version == 1
+                        || approvals.covers("quality_below_policy")
+                        || delta
+                            .ssimulacra2
+                            .is_none_or(|score| score >= self.report.options.min_score),
+                    "perceptual quality verification failed"
+                );
+                if resource.resource.android.is_some() && candidate.format == "webp" {
+                    crate::android::webp_compatibility(
+                        self.min_sdk(),
+                        false,
+                        before.info.has_transparent_pixels,
+                    )
+                    .map_err(|reason| {
+                        anyhow::anyhow!(
+                            "WebP is not supported on every API level of this app: {reason}"
+                        )
+                    })?;
+                }
                 ensure!(
                     candidate.format != "jpeg" || !before.info.has_transparent_pixels,
                     "JPEG cannot preserve alpha"
@@ -239,15 +330,21 @@ impl Review {
         let rel = &resource.resource.path;
         let crossing =
             candidate.format != resource.resource.format || resource.resource.extension_mismatch;
-        ensure!(
-            !rel.file_name()
-                .is_some_and(|n| n.to_string_lossy().to_ascii_lowercase().ends_with(".9.png")),
-            "Nine-patch optimization requires Android-specific validation"
-        );
-        ensure!(
-            !crossing || !crate::resources::android_resource_path(rel),
-            "Android cross-format application is not supported; review/download the candidate instead"
-        );
+        if crossing && let Some(lock) = &resource.resource.format_lock {
+            bail!("{}", format_lock_explanation(lock));
+        }
+        let android = resource.resource.android.as_ref();
+        if crossing && android.is_some() {
+            ensure!(
+                candidate.format == "webp",
+                "Android resources are only converted to WebP; JPEG and HEIC replacements are not proposed"
+            );
+            if !candidate.lossy {
+                crate::android::webp_compatibility(self.min_sdk(), true, true).map_err(
+                    |reason| anyhow::anyhow!("Lossless WebP is not supported on every API level of this app: {reason}"),
+                )?;
+            }
+        }
         ensure!(
             candidate.format != "webp"
                 || !rel.components().any(|p| Path::new(p.as_os_str())
@@ -303,6 +400,24 @@ impl Review {
                     Some(replacement.contents),
                 ));
             }
+        } else if crossing && android.is_some_and(|a| a.area == "res") {
+            // `res/` files are addressed by resource name, which a suffix change
+            // keeps, so no reference is rewritten. Two files with one name in
+            // the same configuration directory would fail the build instead.
+            let name = android.and_then(|a| a.name.as_deref()).unwrap_or_default();
+            let directory = self
+                .report
+                .root
+                .join(rel.parent().context("resource has no parent")?);
+            for entry in fs::read_dir(&directory)? {
+                let sibling = entry?.file_name();
+                let sibling = sibling.to_string_lossy();
+                ensure!(
+                    Some(sibling.as_ref()) == rel.file_name().and_then(|n| n.to_str())
+                        || sibling.split('.').next() != Some(name),
+                    "another file already defines the resource name {name:?} in this directory: {sibling}"
+                );
+            }
         } else if crossing {
             let (reference_edits, context) = crate::references::plan(
                 &self.report.root,
@@ -330,16 +445,25 @@ impl Review {
 
     #[cfg(test)]
     pub fn preview(&self, index: usize, candidate: usize) -> Result<serde_json::Value> {
-        self.preview_with_warnings(index, candidate, false)
+        self.preview_with_warnings(index, candidate, &[])
     }
 
+    /// Dry run of an application. `warnings` are the approvals the caller
+    /// intends to send with the apply request.
     pub fn preview_with_warnings(
         &self,
         index: usize,
         candidate: usize,
-        approve_alpha_loss: bool,
+        warnings: &[String],
     ) -> Result<serde_json::Value> {
-        let prepared = self.prepare(index, candidate, true, approve_alpha_loss)?;
+        let prepared = self.prepare(
+            index,
+            candidate,
+            &Approvals {
+                lossy: true,
+                warnings: warnings.to_vec(),
+            },
+        )?;
         let r = self.source(index)?;
         let c = &r.candidates[candidate];
         let target = if c.format != r.resource.format || r.resource.extension_mismatch {
@@ -353,9 +477,29 @@ impl Review {
             .filter(|(path, _, _)| path != &r.resource.path && path != &target)
             .map(|(path, _, _)| path)
             .collect();
-        Ok(
-            serde_json::json!({"plan_token":prepared.token(index,candidate)?,"source":r.resource.path,"target":target,"reference_files":references,"loose_conversion":prepared.references.is_some()}),
-        )
+        let android = r.resource.android.as_ref().map(|a| {
+            serde_json::json!({
+                "area": a.area,
+                "resource_type": a.res_type,
+                "resource_name": a.name,
+                "qualifiers": a.qualifiers,
+                "min_sdk": self.min_sdk(),
+                "usage": (a.area == "res" && target != r.resource.path)
+                    .then(|| crate::android_refs::usage(&self.report.root, a).ok())
+                    .flatten(),
+            })
+        });
+        Ok(serde_json::json!({
+            "plan_token": prepared.token(index, candidate)?,
+            "source": r.resource.path,
+            "target": target,
+            "reference_files": references,
+            "loose_conversion": prepared.references.is_some(),
+            "warning": c.rejection.as_ref().filter(|_| c.is_warning()),
+            "warnings": c.required_warnings(),
+            "notes": c.notes,
+            "android": android,
+        }))
     }
 
     #[cfg(test)]
@@ -371,20 +515,27 @@ impl Review {
         approve_lossy: bool,
         token: Option<&str>,
     ) -> Result<()> {
-        self.apply_with_warnings(index, candidate_index, approve_lossy, false, token)
+        let approvals = Approvals {
+            lossy: approve_lossy,
+            warnings: vec![],
+        };
+        self.apply_with_warnings(index, candidate_index, &approvals, token, true)
     }
 
+    /// Apply one candidate as a journaled transaction. With `require_preview`,
+    /// a reference migration must carry the token of the plan the user saw;
+    /// batch application previews the policy instead of every file.
     pub fn apply_with_warnings(
         &self,
         index: usize,
         candidate_index: usize,
-        approve_lossy: bool,
-        approve_alpha_loss: bool,
+        approvals: &Approvals,
         token: Option<&str>,
+        require_preview: bool,
     ) -> Result<()> {
         let _lock = self.lock()?;
-        let prepared = self.prepare(index, candidate_index, approve_lossy, approve_alpha_loss)?;
-        if prepared.references.is_some() {
+        let prepared = self.prepare(index, candidate_index, approvals)?;
+        if prepared.references.is_some() && require_preview {
             ensure!(
                 token.is_some(),
                 "preview and confirm the reference migration first"
@@ -409,13 +560,22 @@ impl Review {
             &Path::new("operations").join(index.to_string()),
         )?;
         let mut transaction = Transaction {
-            schema_version: 2,
+            schema_version: 3,
             root: self.report.root.clone(),
             resource: index,
             candidate: candidate_index,
             changes: vec![],
             references: prepared.references,
-            approved_alpha_loss: approve_alpha_loss,
+            approved_alpha_loss: approvals
+                .warnings
+                .iter()
+                .any(|w| w != "quality_below_policy"),
+            // Record only the approval this candidate actually needed.
+            approved_warnings: self.report.resources[index].candidates[candidate_index]
+                .required_warnings()
+                .into_iter()
+                .filter(|warning| approvals.covers(warning))
+                .collect(),
         };
         for (path, before, after) in prepared.edits {
             let save = |data: Option<Vec<u8>>| -> Result<Option<String>> {
@@ -481,7 +641,7 @@ impl Review {
         let t: Transaction =
             serde_json::from_slice(&bounded_read(&contained_file(&self.directory, &relative)?)?)?;
         ensure!(
-            matches!(t.schema_version, 1 | 2) && t.root == self.report.root && t.resource == index,
+            matches!(t.schema_version, 1..=3) && t.root == self.report.root && t.resource == index,
             "invalid transaction"
         );
         let r = self.source(index)?;
@@ -506,7 +666,7 @@ impl Review {
                     .as_ref()
                     .context("unexpected transaction path")?;
                 ensure!(
-                    t.schema_version == 2,
+                    t.schema_version >= 2,
                     "references require transaction schema 2"
                 );
                 let before = blob(
@@ -648,391 +808,5 @@ fn current(root: &Path, relative: &Path) -> Result<Option<String>> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{AnalysisOptions, ImageCandidate, Resource, ResourceInventory};
-
-    fn fixture(
-        format: &str,
-        catalog: bool,
-    ) -> (tempfile::TempDir, tempfile::TempDir, Review, Vec<u8>) {
-        let root = tempfile::tempdir().unwrap();
-        let out = tempfile::tempdir().unwrap();
-        let mut original = Vec::new();
-        {
-            let mut encoder = png::Encoder::new(&mut original, 64, 64);
-            encoder.set_color(png::ColorType::Rgba);
-            encoder.set_compression(png::Compression::NoCompression);
-            encoder
-                .write_header()
-                .unwrap()
-                .write_image_data(&[36, 80, 120, 255].repeat(64 * 64))
-                .unwrap();
-        }
-        let path = if catalog {
-            PathBuf::from("Assets.xcassets/Example.imageset/picture.png")
-        } else {
-            PathBuf::from("picture.png")
-        };
-        fs::create_dir_all(root.path().join(path.parent().unwrap())).unwrap();
-        fs::write(root.path().join(&path), &original).unwrap();
-        if catalog {
-            fs::write(root.path().join(path.parent().unwrap()).join("Contents.json"), br#"{"images":[{"filename":"picture.png","idiom":"universal","scale":"2x"},{"filename":"picture.png","idiom":"universal","scale":"3x"}],"info":{"version":1,"author":"xcode"},"custom":{"keep":true}}"#).unwrap();
-        }
-        let optimized = if format == "png" {
-            optimizer::optimize(&original, &crate::Policy::default()).unwrap()
-        } else if format == "webp" {
-            crate::webp_backend::encode(
-                &original,
-                &image_backend::decode(&original, crate::DEFAULT_MAX_PIXELS).unwrap(),
-                85,
-            )
-            .unwrap()
-        } else {
-            image_backend::encode(&original, format, 85).unwrap()
-        };
-        fs::create_dir(out.path().join("candidates")).unwrap();
-        let artifact = PathBuf::from(format!("candidates/0.{format}"));
-        fs::write(out.path().join(&artifact), &optimized).unwrap();
-        let resource = Resource {
-            path,
-            bytes: original.len() as u64,
-            kind: "image".into(),
-            format: "png".into(),
-            extension: "png".into(),
-            extension_mismatch: false,
-            origin: if catalog {
-                "catalog_rendition"
-            } else {
-                "loose_file"
-            }
-            .into(),
-            conversion_exclusion: None,
-        };
-        let report = AnalysisReport {
-            schema_version: 1,
-            root: fs::canonicalize(root.path()).unwrap(),
-            backend: "test".into(),
-            options: AnalysisOptions::default(),
-            inventory: ResourceInventory {
-                schema_version: 2,
-                root: root.path().into(),
-                catalogs: usize::from(catalog),
-                assets: vec![],
-                skipped_source_or_tooling_files: 0,
-                excluded_directories: vec![],
-                diagnostics: vec![],
-            },
-            resources: vec![ResourceAnalysis {
-                resource,
-                sha256: Some(hash(&original)),
-                image: None,
-                status: "candidates_available".into(),
-                issues: vec![],
-                candidates: vec![ImageCandidate {
-                    format: format.into(),
-                    quality: if format == "png" { None } else { Some(85) },
-                    lossy: format != "png",
-                    bytes: optimized.len() as u64,
-                    savings_bytes: (original.len() - optimized.len()) as u64,
-                    valid: true,
-                    rejection: None,
-                    difference: None,
-                    artifact: Some(artifact),
-                    preview: None,
-                }],
-                smallest_candidate: Some(0),
-                original_preview: None,
-                original_artifact: None,
-            }],
-            status_counts: BTreeMap::new(),
-            potential_source_bytes_saved: 0,
-        };
-        fs::write(
-            out.path().join("analysis.json"),
-            serde_json::to_vec(&report).unwrap(),
-        )
-        .unwrap();
-        let review = Review::open(out.path()).unwrap();
-        (root, out, review, original)
-    }
-
-    #[test]
-    fn lossless_apply_restart_restore_and_reapply() {
-        let (root, out, review, original) = fixture("png", true);
-        let source = root.path().join(&review.report.resources[0].resource.path);
-        review.apply(0, 0, false).unwrap();
-        assert!(fs::metadata(&source).unwrap().len() < original.len() as u64);
-        assert_eq!(review.states()["0"]["state"], "applied");
-        let reopened = Review::open(out.path()).unwrap();
-        reopened.restore(0).unwrap();
-        assert_eq!(fs::read(&source).unwrap(), original);
-        reopened.apply(0, 0, false).unwrap();
-        reopened.restore(0).unwrap();
-        assert_eq!(fs::read(&source).unwrap(), original);
-    }
-
-    #[test]
-    fn changed_source_candidate_and_user_edits_are_refused() {
-        let (root, out, review, original) = fixture("png", false);
-        let source = root.path().join("picture.png");
-        fs::write(&source, b"user edit").unwrap();
-        assert!(review.apply(0, 0, false).is_err());
-        fs::write(&source, &original).unwrap();
-        let artifact = out.path().join("candidates/0.png");
-        let candidate = fs::read(&artifact).unwrap();
-        fs::write(&artifact, b"tampered").unwrap();
-        assert!(review.apply(0, 0, false).is_err());
-        fs::write(&artifact, candidate).unwrap();
-        review.apply(0, 0, false).unwrap();
-        fs::write(&source, b"later user edit").unwrap();
-        assert!(review.restore(0).is_err());
-        assert_eq!(fs::read(&source).unwrap(), b"later user edit");
-        assert_eq!(review.states()["0"]["state"], "conflict");
-    }
-
-    #[test]
-    fn alpha_warning_requires_explicit_approval_and_still_checks_file_integrity() {
-        let (root, out, mut review, _) = fixture("webp", false);
-        let mut original = Vec::new();
-        {
-            let mut encoder = png::Encoder::new(&mut original, 64, 64);
-            encoder.set_color(png::ColorType::Rgba);
-            encoder.set_compression(png::Compression::NoCompression);
-            encoder
-                .write_header()
-                .unwrap()
-                .write_image_data(&[36, 80, 120, 128].repeat(64 * 64))
-                .unwrap();
-        }
-        fs::write(root.path().join("picture.png"), &original).unwrap();
-        let r = &mut review.report.resources[0];
-        r.sha256 = Some(hash(&original));
-        r.resource.bytes = original.len() as u64;
-        r.smallest_candidate = None;
-        r.candidates[0].valid = false;
-        r.candidates[0].rejection = Some("alpha_error_exceeds_policy".into());
-        assert!(review.preview(0, 0).is_err());
-        assert!(review.apply_reviewed(0, 0, true, None).is_err());
-        let plan = review.preview_with_warnings(0, 0, true).unwrap();
-        assert!(
-            review
-                .apply_with_warnings(0, 0, true, false, plan["plan_token"].as_str())
-                .is_err()
-        );
-        review
-            .apply_with_warnings(0, 0, true, true, plan["plan_token"].as_str())
-            .unwrap();
-        assert!(root.path().join("picture.webp").is_file());
-        let transaction: serde_json::Value = serde_json::from_slice(
-            &fs::read(out.path().join("operations/0/transaction.json")).unwrap(),
-        )
-        .unwrap();
-        assert_eq!(transaction["approved_alpha_loss"], true);
-        review.restore(0).unwrap();
-        assert_eq!(fs::read(root.path().join("picture.png")).unwrap(), original);
-        let plan = review.preview_with_warnings(0, 0, true).unwrap();
-        fs::write(root.path().join("picture.png"), b"external edit").unwrap();
-        assert!(
-            review
-                .apply_with_warnings(0, 0, true, true, plan["plan_token"].as_str())
-                .is_err()
-        );
-        assert_eq!(
-            fs::read(root.path().join("picture.png")).unwrap(),
-            b"external edit"
-        );
-    }
-
-    #[test]
-    fn project_lock_and_catalog_exclusion_are_enforced() {
-        let (root, _out, review, original) = fixture("png", true);
-        fs::write(root.path().join(".resopt.lock"), b"other process").unwrap();
-        assert!(review.apply(0, 0, false).is_err());
-        fs::remove_file(root.path().join(".resopt.lock")).unwrap();
-        let dir = root.path().join("Assets.xcassets/Example.imageset");
-        fs::write(dir.join("Contents.json"),br#"{"images":[{"filename":"picture.png","idiom":"universal"}],"properties":{"resizing":{"mode":"9-part"}}}"#).unwrap();
-        assert!(review.apply(0, 0, false).is_err());
-        assert_eq!(fs::read(dir.join("picture.png")).unwrap(), original);
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn symlink_sources_and_backup_directories_are_refused() {
-        let (root, out, review, original) = fixture("png", false);
-        let external = tempfile::tempdir().unwrap();
-        std::os::unix::fs::symlink(external.path(), out.path().join("operations")).unwrap();
-        assert!(review.apply(0, 0, false).is_err());
-        assert_eq!(fs::read(root.path().join("picture.png")).unwrap(), original);
-        fs::remove_file(out.path().join("operations")).unwrap();
-        fs::write(external.path().join("image.png"), &original).unwrap();
-        fs::remove_file(root.path().join("picture.png")).unwrap();
-        std::os::unix::fs::symlink(
-            external.path().join("image.png"),
-            root.path().join("picture.png"),
-        )
-        .unwrap();
-        assert!(review.apply(0, 0, false).is_err());
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn jpeg_and_heic_update_all_renditions_and_restore_exact_catalog() {
-        for format in ["jpeg", "heic"] {
-            let (root, out, review, original) = fixture(format, true);
-            let dir = root.path().join("Assets.xcassets/Example.imageset");
-            let contents = fs::read(dir.join("Contents.json")).unwrap();
-            assert!(review.apply(0, 0, false).is_err());
-            review.apply(0, 0, true).unwrap();
-            assert!(!dir.join("picture.png").exists());
-            assert!(dir.join(format!("picture.{format}")).exists());
-            let value: serde_json::Value =
-                serde_json::from_slice(&fs::read(dir.join("Contents.json")).unwrap()).unwrap();
-            for image in value["images"].as_array().unwrap() {
-                assert_eq!(image["filename"], format!("picture.{format}"));
-            }
-            assert_eq!(value["custom"]["keep"], true);
-            Review::open(out.path()).unwrap().restore(0).unwrap();
-            assert_eq!(fs::read(dir.join("picture.png")).unwrap(), original);
-            assert_eq!(fs::read(dir.join("Contents.json")).unwrap(), contents);
-            assert!(!dir.join(format!("picture.{format}")).exists());
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn partial_conversion_recovers_but_collisions_and_loose_rename_are_refused() {
-        let (root, _out, review, original) = fixture("heic", true);
-        let dir = root.path().join("Assets.xcassets/Example.imageset");
-        fs::write(dir.join("picture.heic"), b"existing image").unwrap();
-        assert!(review.apply(0, 0, true).is_err());
-        fs::remove_file(dir.join("picture.heic")).unwrap();
-        let contents = fs::read(dir.join("Contents.json")).unwrap();
-        review.apply(0, 0, true).unwrap();
-        // Simulate interruption after target creation, before catalog/source changes.
-        fs::write(dir.join("picture.png"), &original).unwrap();
-        fs::write(dir.join("Contents.json"), &contents).unwrap();
-        assert_eq!(review.states()["0"]["state"], "partial");
-        review.restore(0).unwrap();
-        assert!(!dir.join("picture.heic").exists());
-        assert_eq!(fs::read(dir.join("picture.png")).unwrap(), original);
-        let (_root, _out, review, _original) = fixture("jpeg", false);
-        assert!(review.apply(0, 0, true).is_err());
-    }
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn shared_catalog_conversions_restore_in_reverse_order() {
-        let (root, _out, mut review, original) = fixture("heic", true);
-        let dir = root.path().join("Assets.xcassets/Example.imageset");
-        fs::write(dir.join("second.png"), &original).unwrap();
-        let contents=br#"{"images":[{"filename":"picture.png","idiom":"universal","scale":"2x"},{"filename":"second.png","idiom":"universal","scale":"3x"}]}"#;
-        fs::write(dir.join("Contents.json"), contents).unwrap();
-        let mut second = review.report.resources[0].clone();
-        second.resource.path = second.resource.path.with_file_name("second.png");
-        review.report.resources.push(second);
-        review.apply(0, 0, true).unwrap();
-        review.apply(1, 0, true).unwrap();
-        assert!(review.restore(0).is_err());
-        assert_eq!(review.states()["0"]["state"], "conflict");
-        review.restore(1).unwrap();
-        review.restore(0).unwrap();
-        assert_eq!(fs::read(dir.join("Contents.json")).unwrap(), contents);
-        assert_eq!(fs::read(dir.join("second.png")).unwrap(), original);
-    }
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn loose_cross_format_migrates_references_and_restores_them_after_restart() {
-        for format in ["jpeg", "heic"] {
-            let (root, out, review, original) = fixture(format, false);
-            let swift = r#"let image = UIImage(named: "picture"); let u = Bundle.main.url(forResource: "picture", withExtension: "png")"#;
-            let config = r#"{"image":"picture.png"}"#;
-            let pbx = r#"AAAAAAAAAAAAAAAAAAAAAAAA = {isa = PBXFileReference; lastKnownFileType = image.png; path = picture.png; sourceTree = "<group>"; };"#;
-            fs::write(root.path().join("View.swift"), swift).unwrap();
-            fs::write(root.path().join("config.json"), config).unwrap();
-            fs::create_dir(root.path().join("App.xcodeproj")).unwrap();
-            fs::write(root.path().join("App.xcodeproj/project.pbxproj"), pbx).unwrap();
-            fs::write(root.path().join(".gitignore"), "ignored.json\n").unwrap();
-            fs::write(root.path().join("ignored.json"), config).unwrap();
-            let preview = review.preview(0, 0).unwrap();
-            assert_eq!(preview["reference_files"].as_array().unwrap().len(), 3);
-            assert_eq!(
-                preview["plan_token"],
-                review.preview(0, 0).unwrap()["plan_token"]
-            );
-            assert!(review.apply(0, 0, true).is_err());
-            review
-                .apply_reviewed(0, 0, true, preview["plan_token"].as_str())
-                .unwrap();
-            assert!(!root.path().join("picture.png").exists());
-            assert!(root.path().join(format!("picture.{format}")).exists());
-            assert!(
-                fs::read_to_string(root.path().join("View.swift"))
-                    .unwrap()
-                    .contains(&format!("picture.{format}"))
-            );
-            assert!(
-                fs::read_to_string(root.path().join("App.xcodeproj/project.pbxproj"))
-                    .unwrap()
-                    .contains(&format!("image.{format}"))
-            );
-            assert_eq!(
-                fs::read_to_string(root.path().join("ignored.json")).unwrap(),
-                config
-            );
-            let reopened = Review::open(out.path()).unwrap();
-            reopened.restore(0).unwrap();
-            assert_eq!(fs::read(root.path().join("picture.png")).unwrap(), original);
-            assert_eq!(
-                fs::read_to_string(root.path().join("View.swift")).unwrap(),
-                swift
-            );
-            assert_eq!(
-                fs::read_to_string(root.path().join("App.xcodeproj/project.pbxproj")).unwrap(),
-                pbx
-            );
-            assert_eq!(
-                fs::read_to_string(root.path().join("config.json")).unwrap(),
-                config
-            );
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn changed_reference_plan_and_later_edits_are_never_overwritten() {
-        let (root, _out, review, original) = fixture("heic", false);
-        let path = root.path().join("config.json");
-        fs::write(&path, r#"{"image":"picture.png"}"#).unwrap();
-        let preview = review.preview(0, 0).unwrap();
-        fs::write(&path, r#"{"image":"picture.png","new":true}"#).unwrap();
-        assert!(
-            review
-                .apply_reviewed(0, 0, true, preview["plan_token"].as_str())
-                .is_err()
-        );
-        assert_eq!(fs::read(root.path().join("picture.png")).unwrap(), original);
-        let preview = review.preview(0, 0).unwrap();
-        review
-            .apply_reviewed(0, 0, true, preview["plan_token"].as_str())
-            .unwrap();
-        let applied = fs::read(&path).unwrap();
-        fs::write(&path, b"later user edits").unwrap();
-        assert!(review.restore(0).is_err());
-        assert_eq!(fs::read(&path).unwrap(), b"later user edits");
-        fs::write(&path, applied).unwrap();
-        review.restore(0).unwrap();
-    }
-
-    #[cfg(target_os = "macos")]
-    #[test]
-    fn loose_conversion_without_references_is_reviewable() {
-        let (root, _out, review, original) = fixture("heic", false);
-        let preview = review.preview(0, 0).unwrap();
-        assert_eq!(preview["reference_files"].as_array().unwrap().len(), 0);
-        review
-            .apply_reviewed(0, 0, true, preview["plan_token"].as_str())
-            .unwrap();
-        review.restore(0).unwrap();
-        assert_eq!(fs::read(root.path().join("picture.png")).unwrap(), original);
-    }
-}
+#[path = "review_tests.rs"]
+mod tests;

@@ -9,7 +9,40 @@
 #[cfg(feature = "native")]
 mod analysis;
 #[cfg(feature = "native")]
+mod analyze_image;
+#[cfg(feature = "native")]
+pub mod android;
+#[cfg(feature = "native")]
+mod android_project;
+#[cfg(feature = "native")]
+mod android_refs;
+#[cfg(feature = "native")]
+mod batch;
+#[cfg(feature = "native")]
+pub use batch::{
+    BatchItem, BatchOutcome, BatchPlan, BatchPolicy, BatchStatus, apply_report, plan_report,
+    restore_report,
+};
+#[cfg(feature = "native")]
+mod cache;
+#[cfg(feature = "native")]
+pub use cache::default_directory as cache_directory;
+#[cfg(feature = "native")]
+mod capabilities;
+#[cfg(feature = "native")]
 mod catalog;
+#[cfg(feature = "native")]
+mod svga;
+#[cfg(feature = "native")]
+mod timings;
+#[cfg(feature = "native")]
+mod tools;
+#[cfg(feature = "native")]
+pub use android_project::MinSdk;
+#[cfg(feature = "native")]
+pub use capabilities::{Capabilities, Capability, capabilities};
+#[cfg(feature = "native")]
+pub use tools::Tool;
 #[cfg(feature = "native")]
 mod filesystem;
 mod image_backend;
@@ -34,8 +67,8 @@ mod resources;
 mod scan_options;
 #[cfg(feature = "native")]
 pub use analysis::{
-    AnalysisOptions, AnalysisReport, ImageCandidate, ResourceAnalysis, analyze,
-    analyze_with_progress,
+    AnalysisControl, AnalysisOptions, AnalysisReport, ImageCandidate, Performance,
+    ResourceAnalysis, analyze, analyze_with_progress,
 };
 pub use image_backend::{
     DEFAULT_MAX_PIXELS, ImageDifference, ImageInfo, MAX_PIXELS_LIMIT, image_backend_available,

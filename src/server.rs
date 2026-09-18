@@ -1,13 +1,30 @@
-//! Loopback-only review server. Never accepts filesystem paths from HTTP clients.
-use crate::{filesystem::contained_file, report::render_page, review::Review};
+//! Loopback-only application server for `resopt web` and `resopt serve`.
+//!
+//! The server binds 127.0.0.1, never accepts filesystem paths or file uploads
+//! from HTTP clients, and checks the Host header on every request (DNS
+//! rebinding), a per-process session token on every API route, and the Origin
+//! header on every state-changing request (cross-site requests).
+use crate::{
+    AnalysisControl, ResourceAnalysis,
+    batch::{self, BatchPlan, BatchPolicy, BatchStatus},
+    filesystem::contained_file,
+    review::{Approvals, Review},
+};
 use anyhow::{Context, Result, ensure};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use std::{
-    collections::BTreeMap,
     io::{Read, Write},
     path::{Path, PathBuf},
+    sync::{
+        Arc, Mutex, OnceLock,
+        atomic::{AtomicBool, Ordering},
+    },
 };
 use tiny_http::{Header, Method, Request, Response, Server, StatusCode};
+
+const MAX_BODY_BYTES: usize = 256 * 1024;
+const RESULTS_PAGE: usize = 500;
+const HTTP_WORKERS: usize = 4;
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -16,174 +33,440 @@ struct Action {
     candidate: Option<usize>,
     #[serde(default)]
     approve_lossy: bool,
+    /// Legacy flag: approves both Alpha warning kinds.
     #[serde(default)]
     approve_alpha_loss: bool,
     #[serde(default)]
+    approve_warnings: Vec<String>,
+    #[serde(default)]
     plan_token: Option<String>,
+}
+
+impl Action {
+    fn warnings(&self) -> Vec<String> {
+        let mut warnings = self.approve_warnings.clone();
+        if self.approve_alpha_loss {
+            for kind in [
+                "alpha_error_exceeds_policy",
+                "transparency_presence_changed",
+            ] {
+                if !warnings.iter().any(|w| w == kind) {
+                    warnings.push(kind.to_string());
+                }
+            }
+        }
+        warnings
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct BatchRequest {
+    policy: BatchPolicy,
+    #[serde(default)]
+    token: Option<String>,
+}
+
+/// Analysis progress shared between the worker thread and HTTP handlers.
+#[derive(Default)]
+pub(crate) struct Live {
+    /// Completed rows in completion order, tagged with their report index.
+    pub rows: Vec<(usize, ResourceAnalysis)>,
+    pub total: usize,
+    pub error: Option<String>,
+    pub cancelled: bool,
+}
+
+#[derive(Serialize)]
+struct ResultsPage<'a> {
+    phase: &'static str,
+    completed: usize,
+    total: usize,
+    candidates: usize,
+    savings_bytes: u64,
+    next: usize,
+    rows: Vec<Row<'a>>,
+    error: Option<&'a str>,
+}
+#[derive(Serialize)]
+struct Row<'a> {
+    index: usize,
+    row: &'a ResourceAnalysis,
+}
+
+pub(crate) struct App {
+    pub directory: PathBuf,
+    pub project: PathBuf,
+    pub live: Mutex<Live>,
+    pub control: AnalysisControl,
+    /// Set once analysis has finished and the report passed validation.
+    pub review: OnceLock<Review>,
+    batch_status: Mutex<BatchStatus>,
+    batch_cancel: AtomicBool,
+    batch_running: AtomicBool,
+}
+
+impl App {
+    pub fn new(directory: PathBuf, project: PathBuf) -> Self {
+        Self {
+            directory,
+            project,
+            live: Mutex::new(Live::default()),
+            control: AnalysisControl::default(),
+            review: OnceLock::new(),
+            batch_status: Mutex::new(BatchStatus::default()),
+            batch_cancel: AtomicBool::new(false),
+            batch_running: AtomicBool::new(false),
+        }
+    }
+
+    /// Publish a finished report: its rows replace the live rows.
+    pub fn finish(&self, review: Review) {
+        {
+            let mut live = self.live.lock().unwrap_or_else(|e| e.into_inner());
+            live.total = review.report.resources.len();
+            live.cancelled = review.report.cancelled;
+            live.rows = review
+                .report
+                .resources
+                .iter()
+                .cloned()
+                .enumerate()
+                .collect();
+        }
+        let _ = self.review.set(review);
+    }
+
+    fn review(&self) -> Result<&Review> {
+        self.review
+            .get()
+            .context("analysis is still running; changes can be applied once it completes")
+    }
 }
 
 /// Serve an existing analysis on loopback. Port 0 chooses an available port.
 /// The printed URL is the entry point; terminate the process to stop serving.
 pub fn serve(directory: impl AsRef<Path>, port: u16) -> Result<()> {
     let server = Server::http(("127.0.0.1", port)).map_err(|e| anyhow::anyhow!("{e}"))?;
-    serve_on(directory.as_ref(), server)
-}
-
-pub(crate) fn serve_on(directory: &Path, server: Server) -> Result<()> {
-    let review = Review::open(directory)?;
-    let address = server.server_addr().to_string();
-    let origin = format!("http://{address}");
-    let mut random = [0_u8; 32];
-    getrandom::fill(&mut random).map_err(|e| anyhow::anyhow!("random token: {e}"))?;
-    let token: String = random.iter().map(|b| format!("{b:02x}")).collect();
-    let html = render_page(&review.report, Some(&token))?;
-    let mut assets = BTreeMap::<String, (PathBuf, String)>::new();
-    assets.insert(
-        "/analysis.json".into(),
-        (PathBuf::from("analysis.json"), "application/json".into()),
-    );
-    for r in &review.report.resources {
-        for path in [r.original_artifact.as_ref(), r.original_preview.as_ref()]
-            .into_iter()
-            .flatten()
-            .chain(
-                r.candidates
-                    .iter()
-                    .flat_map(|c| [c.artifact.as_ref(), c.preview.as_ref()])
-                    .flatten(),
-            )
-        {
-            let media = match path.extension().and_then(|v| v.to_str()) {
-                Some("png") => "image/png",
-                Some("jpeg" | "jpg") => "image/jpeg",
-                Some("heic") => "image/heic",
-                Some("webp") => "image/webp",
-                _ => "application/octet-stream",
-            };
-            let url = format!("/{}", path.to_string_lossy().replace('\\', "/"));
-            ensure!(url.is_ascii(), "non-ASCII artifact path is unsupported");
-            assets.insert(url, (path.clone(), media.into()));
-        }
-    }
+    let review = Review::open(directory.as_ref())?;
+    let app = Arc::new(App::new(
+        review.directory.clone(),
+        review.report.root.clone(),
+    ));
+    app.finish(review);
     println!(
-        "Review server: {origin}/\nProject: {}\nStop with Ctrl-C. Sources change only after an explicit Apply request.",
-        review.report.root.display()
+        "Review server: http://{}/\nProject: {}\nStop with Ctrl-C. Sources change only after an explicit Apply request.",
+        server.server_addr(),
+        app.project.display()
     );
     std::io::stdout().flush()?;
-    for mut request in server.incoming_requests() {
-        if header(&request, "Host") != Some(address.as_str()) {
-            respond(
-                request,
-                403,
-                "application/json",
-                br#"{"error":"invalid Host"}"#.to_vec(),
-            );
-            continue;
-        }
-        let route = request.url().to_string();
-        if request.method() == &Method::Get && matches!(route.as_str(), "/" | "/report.html") {
-            respond(
-                request,
-                200,
-                "text/html; charset=utf-8",
-                html.as_bytes().to_vec(),
-            );
-        } else if request.method() == &Method::Get && route == "/api/progress" {
-            respond(
-                request,
-                200,
-                "application/json",
-                br#"{"done":true}"#.to_vec(),
-            );
-        } else if request.method() == &Method::Get && route == "/api/state" {
-            if header(&request, "X-Resopt-Token") != Some(token.as_str()) {
-                respond(
-                    request,
-                    403,
-                    "application/json",
-                    br#"{"error":"invalid session"}"#.to_vec(),
-                );
-                continue;
-            }
-            respond(
-                request,
-                200,
-                "application/json",
-                serde_json::to_vec(&review.states())?,
-            );
-        } else if request.method() == &Method::Post
-            && matches!(
-                route.as_str(),
-                "/api/apply" | "/api/restore" | "/api/preview"
-            )
-        {
-            if header(&request, "Origin") != Some(origin.as_str())
-                || header(&request, "X-Resopt-Token") != Some(token.as_str())
-                || header(&request, "Content-Type") != Some("application/json")
-            {
-                respond(
-                    request,
-                    403,
-                    "application/json",
-                    br#"{"error":"invalid origin or session"}"#.to_vec(),
-                );
-                continue;
-            }
-            let result = (|| -> Result<serde_json::Value> {
-                ensure!(
-                    request.body_length().is_some_and(|n| n <= 4096),
-                    "request too large or missing content length"
-                );
-                let mut body = vec![];
-                request.as_reader().take(4097).read_to_end(&mut body)?;
-                ensure!(body.len() <= 4096, "request too large");
-                let action: Action = serde_json::from_slice(&body)?;
-                if route == "/api/preview" {
-                    return review.preview_with_warnings(
-                        action.resource,
-                        action.candidate.context("missing candidate")?,
-                        action.approve_alpha_loss,
-                    );
+    run(Arc::new(server), app)
+}
+
+pub(crate) fn session_token() -> Result<String> {
+    let mut random = [0_u8; 32];
+    getrandom::fill(&mut random).map_err(|e| anyhow::anyhow!("random token: {e}"))?;
+    Ok(random.iter().map(|b| format!("{b:02x}")).collect())
+}
+
+/// Handle requests until the process exits.
+pub(crate) fn run(server: Arc<Server>, app: Arc<App>) -> Result<()> {
+    let token = session_token()?;
+    let address = server.server_addr().to_string();
+    let page = crate::report::render_live_page(&app.project, &token)?;
+    let session = Arc::new(Session {
+        origin: format!("http://{address}"),
+        address,
+        token,
+        page,
+    });
+    let workers: Vec<_> = (0..HTTP_WORKERS)
+        .map(|_| {
+            let (server, app, session) = (server.clone(), app.clone(), session.clone());
+            std::thread::spawn(move || {
+                for request in server.incoming_requests() {
+                    handle(request, &app, &session);
                 }
-                if route == "/api/apply" {
-                    review.apply_with_warnings(
-                        action.resource,
-                        action.candidate.context("missing candidate")?,
-                        action.approve_lossy,
-                        action.approve_alpha_loss,
-                        action.plan_token.as_deref(),
-                    )?;
-                } else {
-                    review.restore(action.resource)?;
-                }
-                Ok(serde_json::json!({"ok":true,"states":review.states()}))
-            })();
-            let (code, body) = match result {
-                Ok(body) => (200, body),
-                Err(e) => (
-                    409,
-                    serde_json::json!({"error":format!("{e:#}"),"states":review.states()}),
-                ),
-            };
-            respond(
-                request,
-                code,
-                "application/json",
-                serde_json::to_vec(&body)?,
-            );
-        } else if request.method() == &Method::Get && assets.contains_key(&route) {
-            let (path, media) = &assets[&route];
-            match contained_file(&review.directory, path)
-                .and_then(|p| crate::resources::bounded_read(&p))
-            {
-                Ok(bytes) => respond(request, 200, media, bytes),
-                Err(_) => respond(request, 404, "text/plain", b"Artifact unavailable".to_vec()),
-            }
-        } else {
-            respond(request, 404, "text/plain", b"Not found".to_vec());
-        }
+            })
+        })
+        .collect();
+    for worker in workers {
+        let _ = worker.join();
     }
     Ok(())
+}
+
+struct Session {
+    address: String,
+    origin: String,
+    token: String,
+    page: String,
+}
+
+fn json(request: Request, code: u16, value: &impl Serialize) {
+    let body = serde_json::to_vec(value)
+        .unwrap_or_else(|_| br#"{"error":"response serialization failed"}"#.to_vec());
+    respond(request, code, "application/json", body);
+}
+
+fn error(request: Request, code: u16, message: &str) {
+    json(request, code, &serde_json::json!({ "error": message }));
+}
+
+fn handle(mut request: Request, app: &Arc<App>, session: &Session) {
+    if header(&request, "Host") != Some(session.address.as_str()) {
+        return error(request, 403, "invalid Host");
+    }
+    let url = request.url().to_string();
+    let (route, query) = url.split_once('?').unwrap_or((&url, ""));
+    let get = request.method() == &Method::Get;
+    let post = request.method() == &Method::Post;
+    if !get && !post {
+        return error(
+            request,
+            405,
+            "method not allowed; this server accepts no uploads",
+        );
+    }
+    if get && matches!(route, "/" | "/report.html") {
+        return respond(
+            request,
+            200,
+            "text/html; charset=utf-8",
+            session.page.as_bytes().to_vec(),
+        );
+    }
+    if get && !route.starts_with("/api/") {
+        return serve_artifact(request, app, route);
+    }
+    if !route.starts_with("/api/") {
+        return error(request, 404, "not found");
+    }
+    if header(&request, "X-Resopt-Token") != Some(session.token.as_str()) {
+        return error(
+            request,
+            403,
+            "invalid session; reload the page opened by resopt",
+        );
+    }
+    if post
+        && (header(&request, "Origin") != Some(session.origin.as_str())
+            || header(&request, "Content-Type") != Some("application/json"))
+    {
+        return error(request, 403, "invalid origin or content type");
+    }
+    let result = if get {
+        api_get(app, route, query)
+    } else {
+        read_body(&mut request).and_then(|body| api_post(app, route, &body))
+    };
+    match result {
+        Ok(Some(value)) => json(request, 200, &value),
+        Ok(None) => error(request, 404, "not found"),
+        Err(failure) => {
+            let states = app.review.get().map(Review::states);
+            json(
+                request,
+                409,
+                &serde_json::json!({"error": format!("{failure:#}"), "states": states}),
+            );
+        }
+    }
+}
+
+fn read_body(request: &mut Request) -> Result<Vec<u8>> {
+    ensure!(
+        request.body_length().is_some_and(|n| n <= MAX_BODY_BYTES),
+        "request too large or missing content length"
+    );
+    let mut body = vec![];
+    request
+        .as_reader()
+        .take(MAX_BODY_BYTES as u64 + 1)
+        .read_to_end(&mut body)?;
+    ensure!(body.len() <= MAX_BODY_BYTES, "request too large");
+    Ok(body)
+}
+
+fn api_get(app: &Arc<App>, route: &str, query: &str) -> Result<Option<serde_json::Value>> {
+    Ok(Some(match route {
+        "/api/capabilities" => serde_json::to_value(crate::capabilities())?,
+        "/api/results" => {
+            let after = query
+                .split('&')
+                .find_map(|pair| pair.strip_prefix("after="))
+                .map(|value| value.parse::<usize>())
+                .transpose()
+                .context("invalid after parameter")?
+                .unwrap_or(0);
+            let live = app.live.lock().unwrap_or_else(|e| e.into_inner());
+            let rows: Vec<_> = live
+                .rows
+                .iter()
+                .skip(after)
+                .take(RESULTS_PAGE)
+                .map(|(index, row)| Row { index: *index, row })
+                .collect();
+            serde_json::to_value(ResultsPage {
+                phase: if live.error.is_some() {
+                    "failed"
+                } else if app.review.get().is_some() {
+                    "ready"
+                } else {
+                    "analyzing"
+                },
+                completed: live.rows.len(),
+                total: live.total,
+                candidates: live
+                    .rows
+                    .iter()
+                    .filter(|(_, r)| r.recommended_savings() > 0)
+                    .count(),
+                savings_bytes: live.rows.iter().map(|(_, r)| r.recommended_savings()).sum(),
+                next: after + rows.len(),
+                rows,
+                error: live.error.as_deref(),
+            })?
+        }
+        "/api/report" => crate::report::meta(&app.review()?.report),
+        "/api/state" => match app.review.get() {
+            Some(review) => review.states(),
+            None => serde_json::json!({}),
+        },
+        "/api/batch" => {
+            serde_json::to_value(&*app.batch_status.lock().unwrap_or_else(|e| e.into_inner()))?
+        }
+        _ => return Ok(None),
+    }))
+}
+
+fn api_post(app: &Arc<App>, route: &str, body: &[u8]) -> Result<Option<serde_json::Value>> {
+    match route {
+        "/api/cancel" => {
+            app.control.cancel();
+            return Ok(Some(serde_json::json!({"ok": true})));
+        }
+        "/api/batch/cancel" => {
+            app.batch_cancel.store(true, Ordering::SeqCst);
+            return Ok(Some(serde_json::json!({"ok": true})));
+        }
+        _ => {}
+    }
+    let review = app.review()?;
+    Ok(Some(match route {
+        "/api/preview" => {
+            let action: Action = serde_json::from_slice(body)?;
+            review.preview_with_warnings(
+                action.resource,
+                action.candidate.context("missing candidate")?,
+                &action.warnings(),
+            )?
+        }
+        "/api/apply" | "/api/restore" => {
+            ensure!(
+                !app.batch_running.load(Ordering::SeqCst),
+                "a batch is running; wait for it to finish or cancel it"
+            );
+            let action: Action = serde_json::from_slice(body)?;
+            if route == "/api/apply" {
+                review.apply_with_warnings(
+                    action.resource,
+                    action.candidate.context("missing candidate")?,
+                    &Approvals {
+                        lossy: action.approve_lossy,
+                        warnings: action.warnings(),
+                    },
+                    action.plan_token.as_deref(),
+                    true,
+                )?;
+            } else {
+                review.restore(action.resource)?;
+            }
+            serde_json::json!({"ok": true, "states": review.states()})
+        }
+        "/api/batch/preview" => {
+            let request: BatchRequest = serde_json::from_slice(body)?;
+            serde_json::to_value(batch::plan(review, &request.policy)?)?
+        }
+        "/api/batch/apply" => {
+            let request: BatchRequest = serde_json::from_slice(body)?;
+            let plan = batch::plan(review, &request.policy)?;
+            ensure!(
+                request.token.as_deref() == Some(plan.token.as_str()),
+                "the project or policy changed after the preview; review the batch again"
+            );
+            start_batch(app, Some(plan))?;
+            serde_json::json!({"ok": true})
+        }
+        "/api/restore-all" => {
+            start_batch(app, None)?;
+            serde_json::json!({"ok": true})
+        }
+        _ => return Ok(None),
+    }))
+}
+
+/// Run a batch (or restore-all when `plan` is `None`) on a background thread.
+fn start_batch(app: &Arc<App>, plan: Option<BatchPlan>) -> Result<()> {
+    ensure!(
+        !app.batch_running.swap(true, Ordering::SeqCst),
+        "another batch is already running"
+    );
+    app.batch_cancel.store(false, Ordering::SeqCst);
+    let app = app.clone();
+    std::thread::spawn(move || {
+        if let Some(review) = app.review.get() {
+            match plan {
+                Some(plan) => batch::run(review, &plan, &app.batch_status, &app.batch_cancel),
+                None => {
+                    *app.batch_status.lock().unwrap_or_else(|e| e.into_inner()) = BatchStatus {
+                        running: true,
+                        ..Default::default()
+                    };
+                    let status = batch::restore_all(review, &app.batch_cancel);
+                    *app.batch_status.lock().unwrap_or_else(|e| e.into_inner()) = status;
+                }
+            }
+        }
+        app.batch_running.store(false, Ordering::SeqCst);
+    });
+    Ok(())
+}
+
+/// Report artifacts are addressed only as `<folder>/<generated-name>`.
+fn artifact_path(route: &str) -> Option<PathBuf> {
+    if route == "/analysis.json" {
+        return Some(PathBuf::from("analysis.json"));
+    }
+    let (folder, name) = route.strip_prefix('/')?.split_once('/')?;
+    let generated = !name.is_empty()
+        && name.len() <= 96
+        && name.as_bytes()[0].is_ascii_digit()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.'))
+        && !name.contains("..");
+    (matches!(folder, "previews" | "candidates" | "originals") && generated)
+        .then(|| Path::new(folder).join(name))
+}
+
+fn serve_artifact(request: Request, app: &App, route: &str) {
+    let Some(relative) = artifact_path(route) else {
+        return respond(request, 404, "text/plain", b"Not found".to_vec());
+    };
+    let media = match relative.extension().and_then(|v| v.to_str()) {
+        Some("png") => "image/png",
+        Some("jpeg" | "jpg") => "image/jpeg",
+        Some("heic") => "image/heic",
+        Some("webp") => "image/webp",
+        Some("json") => "application/json",
+        _ => "application/octet-stream",
+    };
+    match contained_file(&app.directory, &relative).and_then(|p| crate::resources::bounded_read(&p))
+    {
+        Ok(bytes) => respond(request, 200, media, bytes),
+        Err(_) => respond(request, 404, "text/plain", b"Artifact unavailable".to_vec()),
+    }
 }
 
 pub(crate) fn header<'a>(request: &'a Request, name: &str) -> Option<&'a str> {
@@ -193,6 +476,7 @@ pub(crate) fn header<'a>(request: &'a Request, name: &str) -> Option<&'a str> {
         .find(|h| h.field.to_string().eq_ignore_ascii_case(name))
         .map(|h| h.value.as_str())
 }
+
 pub(crate) fn respond(request: Request, code: u16, media: &str, bytes: Vec<u8>) {
     let mut response = Response::from_data(bytes).with_status_code(StatusCode(code));
     for (key, value) in [
@@ -200,6 +484,7 @@ pub(crate) fn respond(request: Request, code: u16, media: &str, bytes: Vec<u8>) 
         ("Cache-Control", "no-store"),
         ("X-Content-Type-Options", "nosniff"),
         ("Referrer-Policy", "no-referrer"),
+        ("Cross-Origin-Resource-Policy", "same-origin"),
         (
             "Content-Security-Policy",
             "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
@@ -208,4 +493,49 @@ pub(crate) fn respond(request: Request, code: u16, media: &str, bytes: Vec<u8>) 
         response.add_header(Header::from_bytes(key, value).expect("static valid header"));
     }
     let _ = request.respond(response);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_generated_artifact_names_are_served() {
+        for route in [
+            "/previews/12-webp-85.png",
+            "/candidates/0-png-0.png",
+            "/originals/7.heic",
+            "/analysis.json",
+        ] {
+            assert!(artifact_path(route).is_some(), "{route}");
+        }
+        for route in [
+            "/previews/../analysis.json",
+            "/previews/..%2f..%2fetc",
+            "/operations/0/transaction.json",
+            "/previews/",
+            "/previews/a/b.png",
+            "/candidates/x.png",
+            "/previews/1\\..\\x",
+            "//etc/passwd",
+            "/report.html/../x",
+        ] {
+            assert!(artifact_path(route).is_none(), "{route}");
+        }
+    }
+
+    #[test]
+    fn legacy_alpha_flag_maps_to_both_alpha_warnings() {
+        let action: Action =
+            serde_json::from_str(r#"{"resource":0,"candidate":1,"approve_alpha_loss":true}"#)
+                .unwrap();
+        assert_eq!(
+            action.warnings(),
+            [
+                "alpha_error_exceeds_policy",
+                "transparency_presence_changed"
+            ]
+        );
+        assert!(serde_json::from_str::<Action>(r#"{"resource":0,"path":"/etc/passwd"}"#).is_err());
+    }
 }

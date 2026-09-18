@@ -174,7 +174,9 @@ fn analysis_inspects_small_images_and_routes_by_actual_alpha() {
         transparent_result
             .candidates
             .iter()
-            .filter(|c| c.format == "heic" && c.valid)
+            .filter(
+                |c| c.format == "heic" && !c.warnings.iter().any(|w| w != "quality_below_policy")
+            )
             .count(),
         3,
         "{:?}",
@@ -484,9 +486,30 @@ fn webp_is_opt_in_and_android_nine_patch_is_not_transcoded() {
         .find(|r| r.resource.path.ends_with("Icon.imageset/file.png"))
         .unwrap();
     assert!(catalog.candidates.iter().all(|c| c.format != "webp"));
-    let candidate = a.candidates.iter().find(|c| c.format == "webp").unwrap();
-    assert!(candidate.valid, "{:?}", candidate.rejection);
+    let candidate = a
+        .candidates
+        .iter()
+        .find(|c| c.format == "webp" && c.lossy)
+        .unwrap();
+    assert!(
+        !candidate
+            .warnings
+            .iter()
+            .any(|w| w != "quality_below_policy"),
+        "{:?}",
+        candidate.rejection
+    );
     assert!(candidate.artifact.is_some());
+    // The lossless WebP candidate is verified sample-for-sample.
+    let lossless = a
+        .candidates
+        .iter()
+        .find(|c| c.format == "webp" && !c.lossy)
+        .unwrap();
+    assert!(
+        lossless.valid || lossless.artifact.is_none(),
+        "{lossless:?}"
+    );
     let data = std::fs::read(
         base.path()
             .join("webp")
@@ -499,22 +522,64 @@ fn webp_is_opt_in_and_android_nine_patch_is_not_transcoded() {
         .iter()
         .find(|r| r.resource.path.ends_with("foo.9.png"))
         .unwrap();
-    assert!(nine.candidates.is_empty());
+    // Nine-patch files keep their format: only pixel-identical PNG work is tried.
+    assert!(
+        nine.candidates
+            .iter()
+            .all(|c| c.format == "png" && !c.lossy),
+        "{:?}",
+        nine.candidates
+    );
+    assert_eq!(nine.resource.conversion_exclusion, None);
     assert_eq!(
-        nine.resource.conversion_exclusion.as_deref(),
+        nine.resource.format_lock.as_deref(),
         Some("android_nine_patch")
+    );
+    assert_eq!(
+        nine.resource.android.as_ref().unwrap().name.as_deref(),
+        Some("foo")
     );
     let android = report
         .resources
         .iter()
         .find(|r| r.resource.path.ends_with("ordinary.png"))
         .unwrap();
+    // Without a known minSdk, WebP is not assumed to be decodable.
+    assert!(android.candidates.iter().all(|c| c.format == "png"));
+    assert!(
+        android
+            .issues
+            .contains(&"android_min_sdk_unknown".to_string())
+    );
+    let with_sdk = analyze(
+        &input,
+        base.path().join("webp-sdk"),
+        AnalysisOptions {
+            webp: true,
+            qualities: vec![85],
+            android_min_sdk: Some(21),
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let android = with_sdk
+        .resources
+        .iter()
+        .find(|r| r.resource.path.ends_with("ordinary.png"))
+        .unwrap();
+    assert!(android.candidates.iter().any(|c| c.format == "webp"));
     assert!(
         android
             .candidates
             .iter()
             .all(|c| matches!(c.format.as_str(), "png" | "webp"))
     );
+    let nine = with_sdk
+        .resources
+        .iter()
+        .find(|r| r.resource.path.ends_with("foo.9.png"))
+        .unwrap();
+    assert!(nine.candidates.iter().all(|c| c.format == "png"));
     let plain = analyze(
         &input,
         base.path().join("plain"),

@@ -28,11 +28,22 @@ impl Drop for Server {
 }
 
 fn request(address: &str, method: &str, route: &str, headers: &str, body: &str) -> String {
+    request_with_host(address, address, method, route, headers, body)
+}
+
+fn request_with_host(
+    host: &str,
+    address: &str,
+    method: &str,
+    route: &str,
+    headers: &str,
+    body: &str,
+) -> String {
     let mut stream = TcpStream::connect(address).unwrap();
     stream
         .set_read_timeout(Some(Duration::from_secs(15)))
         .unwrap();
-    write!(stream,"{method} {route} HTTP/1.1\r\nHost: {address}\r\nConnection: close\r\nContent-Length: {}\r\n{headers}\r\n{body}",body.len()).unwrap();
+    write!(stream,"{method} {route} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\nContent-Length: {}\r\n{headers}\r\n{body}",body.len()).unwrap();
     let mut bytes = Vec::new();
     stream.read_to_end(&mut bytes).unwrap();
     let split = bytes.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
@@ -61,7 +72,7 @@ fn request(address: &str, method: &str, route: &str, headers: &str, body: &str) 
         }
         body = decoded;
     }
-    head + &String::from_utf8(body).unwrap()
+    head + &String::from_utf8_lossy(&body)
 }
 
 #[test]
@@ -233,6 +244,7 @@ fn web_analyzes_local_project_without_uploads_and_serves_review() {
                 "--out",
                 out.to_str().unwrap(),
                 "--no-open",
+                "--no-cache",
                 "--qualities",
                 "85",
             ])
@@ -250,21 +262,9 @@ fn web_analyzes_local_project_without_uploads_and_serves_review() {
         .to_string();
     let address = origin.strip_prefix("http://").unwrap();
     assert!(address.starts_with("127.0.0.1:"));
-    let deadline = std::time::Instant::now() + Duration::from_secs(45);
-    loop {
-        let progress = request(address, "GET", "/api/progress", "", "");
-        assert!(progress.starts_with("HTTP/1.1 200"), "{progress}");
-        let progress: serde_json::Value =
-            serde_json::from_str(progress.split("\r\n\r\n").nth(1).unwrap()).unwrap();
-        assert!(progress["error"].is_null(), "{progress}");
-        if progress["done"] == true {
-            break;
-        }
-        assert!(std::time::Instant::now() < deadline, "analysis timed out");
-        std::thread::sleep(Duration::from_millis(50));
-    }
+    // The shell page carries the session token and no project data.
     let page = request(address, "GET", "/", "", "");
-    assert!(page.contains("report-data"));
+    assert!(page.starts_with("HTTP/1.1 200"), "{page}");
     let data = page
         .split("id=\"report-data\">")
         .nth(1)
@@ -273,27 +273,129 @@ fn web_analyzes_local_project_without_uploads_and_serves_review() {
         .next()
         .unwrap();
     let data: serde_json::Value = serde_json::from_str(data).unwrap();
-    let resources = data["resources"].as_array().unwrap();
-    assert_eq!(resources.len(), 1);
-    assert_eq!(resources[0]["resource"]["path"], "image.png");
-    let candidates = resources[0]["candidates"].as_array().unwrap();
+    assert!(data.get("resources").is_none());
+    let token = data["sessionToken"].as_str().unwrap().to_string();
+    let session = format!("X-Resopt-Token: {token}\r\n");
+    let post = format!("Content-Type: application/json\r\nOrigin: {origin}\r\n{session}");
+    let body_of = |response: &str| -> serde_json::Value {
+        serde_json::from_str(response.split("\r\n\r\n").nth(1).unwrap()).unwrap()
+    };
+
+    // Every API route needs the session token, a loopback Host, and for
+    // state changes the page's own Origin.
+    assert!(request(address, "GET", "/api/results", "", "").starts_with("HTTP/1.1 403"));
+    assert!(request(address, "GET", "/api/capabilities", "", "").starts_with("HTTP/1.1 403"));
+    let rebinding = request_with_host("attacker.example", address, "GET", "/", "", "");
+    assert!(rebinding.starts_with("HTTP/1.1 403"), "{rebinding}");
+    let cross_site = post.replace(&origin, "https://attacker.example");
+    for route in ["/api/cancel", "/api/batch/apply", "/api/restore-all"] {
+        let response = request(address, "POST", route, &cross_site, "{}");
+        assert!(response.starts_with("HTTP/1.1 403"), "{route}: {response}");
+        let no_token = request(
+            address,
+            "POST",
+            route,
+            "Content-Type: application/json\r\n",
+            "{}",
+        );
+        assert!(no_token.starts_with("HTTP/1.1 403"), "{route}: {no_token}");
+    }
+
+    // Rows stream in while analysis runs; wait for the verified report.
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    let results = loop {
+        let response = request(address, "GET", "/api/results?after=0", &session, "");
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        let results = body_of(&response);
+        assert!(results["error"].is_null(), "{results}");
+        if results["phase"] == "ready" {
+            break results;
+        }
+        assert!(std::time::Instant::now() < deadline, "analysis timed out");
+        std::thread::sleep(Duration::from_millis(50));
+    };
+    let rows = results["rows"].as_array().unwrap();
+    assert_eq!(rows.len(), 1, "{results}");
+    assert_eq!(rows[0]["row"]["resource"]["path"], "image.png");
+    let candidates = rows[0]["row"]["candidates"].as_array().unwrap();
     assert!(
         candidates
             .iter()
-            .any(|c| c["format"] == "png" && c["artifact"].is_string())
+            .any(|c| c["format"] == "png" && c["artifact"].is_string() && c["sha256"].is_string())
     );
     #[cfg(not(target_os = "macos"))]
     assert!(candidates.iter().all(|c| c["format"] == "png"));
     assert_eq!(fs::read(root.join("image.png")).unwrap(), original);
+    let capabilities = body_of(&request(address, "GET", "/api/capabilities", &session, ""));
+    assert_eq!(
+        capabilities["features"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|f| f["id"] == "heic")
+            .unwrap()["available"],
+        cfg!(target_os = "macos")
+    );
+
+    // No upload surface and no path traversal.
     let upload = request(
         address,
         "POST",
         "/api/convert",
-        "Content-Type: application/octet-stream\r\n",
+        &format!("Content-Type: application/octet-stream\r\nOrigin: {origin}\r\n{session}"),
         "file bytes",
     );
-    assert!(!upload.starts_with("HTTP/1.1 200"));
+    assert!(upload.starts_with("HTTP/1.1 403"), "{upload}");
+    assert!(
+        request(address, "PUT", "/previews/0-original.png", &session, "x")
+            .starts_with("HTTP/1.1 405")
+    );
     assert!(request(address, "GET", "/../project/image.png", "", "").starts_with("HTTP/1.1 404"));
+    let artifact = candidates.iter().find(|c| c["format"] == "png").unwrap()["artifact"]
+        .as_str()
+        .unwrap();
+    assert!(request(address, "GET", &format!("/{artifact}"), "", "").starts_with("HTTP/1.1 200"));
+
+    // Batch: preview with the default lossless policy, confirm, then restore all.
+    let policy = r#"{"policy":{}}"#;
+    let plan = body_of(&request(
+        address,
+        "POST",
+        "/api/batch/preview",
+        &post,
+        policy,
+    ));
+    assert_eq!(plan["items"].as_array().unwrap().len(), 1, "{plan}");
+    assert_eq!(plan["lossy_items"], 0);
+    let stale = request(
+        address,
+        "POST",
+        "/api/batch/apply",
+        &post,
+        r#"{"policy":{},"token":"stale"}"#,
+    );
+    assert!(stale.starts_with("HTTP/1.1 409"), "{stale}");
+    assert_eq!(fs::read(root.join("image.png")).unwrap(), original);
+    let confirmed = json!({"policy": {}, "token": plan["token"]}).to_string();
+    let started = request(address, "POST", "/api/batch/apply", &post, &confirmed);
+    assert!(started.starts_with("HTTP/1.1 200"), "{started}");
+    let wait_for_batch = || loop {
+        let status = body_of(&request(address, "GET", "/api/batch", &session, ""));
+        if status["running"] == false {
+            break status;
+        }
+        assert!(std::time::Instant::now() < deadline, "batch timed out");
+        std::thread::sleep(Duration::from_millis(30));
+    };
+    let status = wait_for_batch();
+    assert_eq!(status["applied"], 1, "{status}");
+    assert_eq!(status["outcomes"][0]["outcome"], "applied");
+    assert!(fs::metadata(root.join("image.png")).unwrap().len() < original.len() as u64);
+    let restoring = request(address, "POST", "/api/restore-all", &post, "{}");
+    assert!(restoring.starts_with("HTTP/1.1 200"), "{restoring}");
+    let status = wait_for_batch();
+    assert_eq!(status["applied"], 1, "{status}");
+    assert_eq!(fs::read(root.join("image.png")).unwrap(), original);
     let report = out.join("analysis.json");
     drop(server);
     assert!(report.is_file());

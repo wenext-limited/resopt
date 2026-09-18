@@ -475,10 +475,22 @@ fn interrupted_batch_can_be_restored_from_hashes() {
 fn separate_plans_respect_project_lock() {
     let (root, _, _, directory) = fixture();
     create_plan(root.path(), &directory, policy()).unwrap();
-    fs::write(root.path().join(".resopt.lock"), b"another plan").unwrap();
+    // Another live process holds the operating-system lock.
+    let held = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(root.path().join(".resopt.lock"))
+        .unwrap();
+    held.lock().unwrap();
     assert!(apply(&directory).is_err());
     assert!(!directory.join(".lock").exists());
     assert!(root.path().join(".resopt.lock").exists());
+    // Once that process exits (or crashes) the leftover file no longer blocks work.
+    drop(held);
+    assert!(root.path().join(".resopt.lock").exists());
+    apply(&directory).unwrap();
+    assert!(!root.path().join(".resopt.lock").exists());
 }
 
 #[cfg(unix)]

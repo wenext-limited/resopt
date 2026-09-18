@@ -1,23 +1,87 @@
 use anyhow::{Context, Result};
-use clap::{Parser, Subcommand};
+use clap::{Args, Parser, Subcommand};
 use resopt::{AnalysisOptions, Policy, analyze_with_progress, apply, create_plan, restore};
 use serde::Serialize;
 use std::{
     fs,
     io::{self, Write},
     path::PathBuf,
-    process::{Command, ExitCode},
+    process::ExitCode,
 };
 
 #[derive(Parser)]
 #[command(
     name = "resopt",
     version,
-    about = "Reviewable resource optimization for Apple projects"
+    about = "Find, review and safely apply resource optimizations for Apple and Android projects"
 )]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
+}
+
+/// Options shared by `web` and `analyze`.
+#[derive(Args)]
+struct AnalysisArgs {
+    /// Encoder quality parameters for lossy candidates (not savings percentages).
+    #[arg(long, value_delimiter = ',', default_value = "75,85,95")]
+    qualities: Vec<u8>,
+    /// Parallel image workers; 0 uses the CPU count, capped at 8.
+    #[arg(long, default_value_t = 0)]
+    jobs: usize,
+    /// Largest decoded image to analyze, in pixels (16 bytes each per decode).
+    #[arg(long, default_value_t = resopt::DEFAULT_MAX_PIXELS)]
+    max_pixels: usize,
+    /// oxipng effort (0..=6) for the lossless PNG candidate.
+    #[arg(long, default_value_t = Policy::default().png_level)]
+    png_level: u8,
+    /// Allow lossless PNG color-type, bit-depth and palette reductions.
+    #[arg(long)]
+    png_reductions: bool,
+    /// Also compare WebP candidates for loose files and Android resources.
+    #[arg(long)]
+    webp: bool,
+    /// Lowest SSIMULACRA2 score a lossy candidate may have and still be recommended.
+    #[arg(long, default_value_t = AnalysisOptions::default().min_score)]
+    min_score: f64,
+    /// Maximum per-pixel alpha error (0 is exact).
+    #[arg(long, default_value_t = AnalysisOptions::default().max_alpha_error)]
+    max_alpha_error: f32,
+    /// Android minSdk when it cannot be read from Gradle files.
+    #[arg(long)]
+    android_min_sdk: Option<u32>,
+    /// Include files matched by Git ignore rules.
+    #[arg(long)]
+    include_ignored: bool,
+    /// Do not read or write the persistent analysis cache.
+    #[arg(long)]
+    no_cache: bool,
+    /// Cache directory (default: the per-user cache directory).
+    #[arg(long)]
+    cache_dir: Option<PathBuf>,
+}
+
+impl AnalysisArgs {
+    fn into_options(self) -> AnalysisOptions {
+        AnalysisOptions {
+            qualities: self.qualities,
+            jobs: self.jobs,
+            max_pixels: self.max_pixels,
+            png_level: self.png_level,
+            png_reductions: self.png_reductions,
+            webp: self.webp,
+            min_score: self.min_score,
+            max_alpha_error: self.max_alpha_error,
+            android_min_sdk: self.android_min_sdk,
+            include_ignored: self.include_ignored,
+            cache_dir: if self.no_cache {
+                None
+            } else {
+                self.cache_dir.or_else(resopt::cache_directory)
+            },
+            ..AnalysisOptions::default()
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -33,21 +97,8 @@ enum Commands {
         port: u16,
         #[arg(long)]
         no_open: bool,
-        #[arg(long, value_delimiter = ',', default_value = "75,85,95")]
-        qualities: Vec<u8>,
-        #[arg(long, default_value_t = 2)]
-        jobs: usize,
-        #[arg(long, default_value_t = resopt::DEFAULT_MAX_PIXELS)]
-        max_pixels: usize,
-        #[arg(long, default_value_t = Policy::default().png_level)]
-        png_level: u8,
-        #[arg(long)]
-        png_reductions: bool,
-        /// Also compare WebP candidates for loose resources (additional encoding time).
-        #[arg(long)]
-        webp: bool,
-        #[arg(long)]
-        include_ignored: bool,
+        #[command(flatten)]
+        analysis: AnalysisArgs,
     },
     /// Report embedded and optional tools. Installs nothing.
     Doctor {
@@ -74,34 +125,18 @@ enum Commands {
         /// New output directory outside the project: JSON, HTML, previews, candidates.
         #[arg(long)]
         out: PathBuf,
-        #[arg(long, value_delimiter = ',', default_value = "75,85,95")]
-        qualities: Vec<u8>,
-        #[arg(long, default_value_t = 2)]
-        jobs: usize,
         #[arg(long, default_value_t = 0)]
         min_input_bytes: u64,
+        /// Decode and inspect only; produce no candidates.
         #[arg(long)]
         probe_only: bool,
-        /// Maximum per-pixel alpha error (0 is exact).
-        #[arg(long, default_value_t = 1.0 / 255.0 + 0.000001)]
-        max_alpha_error: f32,
-        /// Largest decoded image to analyze, in pixels (16 bytes each per decode).
-        #[arg(long, default_value_t = resopt::DEFAULT_MAX_PIXELS)]
-        max_pixels: usize,
-        /// oxipng effort (0..=6) for the lossless PNG candidate.
-        #[arg(long, default_value_t = Policy::default().png_level)]
-        png_level: u8,
-        /// Allow lossless PNG color-type, bit-depth and palette reductions.
+        /// Print per-phase timings to stderr.
         #[arg(long)]
-        png_reductions: bool,
-        /// Also compare WebP candidates for loose resources (additional encoding time).
-        #[arg(long)]
-        webp: bool,
+        timings: bool,
         #[arg(long)]
         json: bool,
-        /// Include files matched by Git ignore rules.
-        #[arg(long)]
-        include_ignored: bool,
+        #[command(flatten)]
+        analysis: AnalysisArgs,
     },
     /// Refresh report.html from saved analysis.json without re-encoding resources.
     Report { directory: PathBuf },
@@ -127,11 +162,42 @@ enum Commands {
         #[arg(long)]
         include_ignored: bool,
     },
-    /// Apply the exact candidates in a reviewed plan directory.
+    /// Apply a reviewed PNG plan, or batch-apply candidates from an analysis report.
+    ///
+    /// For an analysis report the default policy applies verified lossless,
+    /// same-format candidates only; the flags below widen it explicitly.
     Apply {
         directory: PathBuf,
         #[arg(long)]
         json: bool,
+        /// Report only: also apply lossy candidates that pass every check.
+        #[arg(long)]
+        lossy: bool,
+        /// Report only: do not apply lossless candidates.
+        #[arg(long)]
+        no_lossless: bool,
+        /// Report only: allow format changes (renames files, migrates references).
+        #[arg(long)]
+        cross_format: bool,
+        /// Report only: accept a warning kind for the whole batch
+        /// (alpha_error_exceeds_policy, transparency_presence_changed, quality_below_policy).
+        #[arg(long = "accept-warning")]
+        accept_warnings: Vec<String>,
+        /// Report only: extra perceptual-score floor for lossy candidates.
+        #[arg(long)]
+        min_score: Option<f64>,
+        /// Report only: limit target formats, e.g. `--format png,webp`.
+        #[arg(long = "format", value_delimiter = ',')]
+        formats: Vec<String>,
+        /// Report only: show what would be applied without changing files.
+        #[arg(long)]
+        dry_run: bool,
+    },
+    /// Show or clear the persistent analysis cache.
+    Cache {
+        /// Delete every cached result.
+        #[arg(long)]
+        clear: bool,
     },
     /// Restore originals, refusing to overwrite files edited since application.
     Restore {
@@ -165,13 +231,7 @@ fn run(cli: Cli) -> Result<()> {
             out,
             port,
             no_open,
-            qualities,
-            jobs,
-            max_pixels,
-            png_level,
-            png_reductions,
-            webp,
-            include_ignored,
+            analysis,
         } => {
             resopt::web(
                 root,
@@ -179,16 +239,7 @@ fn run(cli: Cli) -> Result<()> {
                     out,
                     port,
                     no_open,
-                    analysis: AnalysisOptions {
-                        qualities,
-                        jobs,
-                        max_pixels,
-                        png_level,
-                        png_reductions,
-                        webp,
-                        include_ignored,
-                        ..Default::default()
-                    },
+                    analysis: analysis.into_options(),
                 },
             )?;
         }
@@ -202,53 +253,55 @@ fn run(cli: Cli) -> Result<()> {
             )?;
         }
         Commands::Doctor { json } => {
-            let report = serde_json::json!({
-                "schema_version": 1,
-                "resopt": env!("CARGO_PKG_VERSION"),
-                "backends": [
-                    {"name":"oxipng", "version":"10.2.1", "status":"embedded", "mode":"strict_lossless_png"},
-                    {"name":"libwebp", "status":"embedded", "mode":"opt_in_webp_candidates"},
-                    {"name":"Apple ImageIO", "available":resopt::image_backend_available(), "mode":"image_analysis_jpeg_heic"}
-                ],
-                "optional_tools": [
-                    {"name":"sips", "available":std::path::Path::new("/usr/bin/sips").is_file(), "backend_implemented":false},
-                    {"name":"ffmpeg", "available":available("ffmpeg"), "backend_implemented":false},
-                    {"name":"ffprobe", "available":available("ffprobe"), "backend_implemented":false}
-                ]
-            });
+            let report = resopt::capabilities();
             if json {
                 output_json(&mut stdout, &report)?;
             } else {
-                writeln!(stdout, "resopt {}", env!("CARGO_PKG_VERSION"))?;
-                writeln!(
-                    stdout,
-                    "PNG: embedded Oxipng 10.2.1; no separate executable required"
-                )?;
-                writeln!(
-                    stdout,
-                    "JPEG/HEIC analysis: {}",
-                    if resopt::image_backend_available() {
-                        "Apple ImageIO (native; no sips/ffmpeg install required)"
-                    } else {
-                        "requires macOS; scan and lossless PNG plan remain available"
-                    }
-                )?;
-                for tool in report["optional_tools"]
-                    .as_array()
-                    .context("invalid doctor report")?
-                {
+                writeln!(stdout, "resopt {} on {}", report.version, report.platform)?;
+                for feature in &report.features {
                     writeln!(
                         stdout,
-                        "{}: {} (future backend; not required)",
-                        tool["name"].as_str().unwrap_or("unknown"),
-                        if tool["available"] == true {
+                        "{:<14} {}{}",
+                        feature.id,
+                        if feature.available {
                             "available"
                         } else {
-                            "not found"
+                            "unavailable"
+                        },
+                        if feature.note.is_empty() {
+                            String::new()
+                        } else {
+                            format!(" — {}", feature.note)
                         }
                     )?;
                 }
+                writeln!(stdout, "\nOptional tools (resopt installs nothing):")?;
+                for tool in &report.tools {
+                    if tool.available {
+                        writeln!(stdout, "{:<14} found — {}", tool.name, tool.purpose)?;
+                    } else {
+                        writeln!(
+                            stdout,
+                            "{:<14} not found — {} Install: {}",
+                            tool.name, tool.purpose, tool.install
+                        )?;
+                    }
+                }
             }
+        }
+        Commands::Cache { clear } => {
+            let directory =
+                resopt::cache_directory().context("no cache directory on this platform")?;
+            if clear && directory.exists() {
+                fs::remove_dir_all(&directory)
+                    .with_context(|| format!("clearing {}", directory.display()))?;
+            }
+            writeln!(
+                stdout,
+                "{}{}",
+                directory.display(),
+                if clear { " (cleared)" } else { "" }
+            )?;
         }
         Commands::Scan {
             root,
@@ -327,30 +380,16 @@ fn run(cli: Cli) -> Result<()> {
         Commands::Analyze {
             root,
             out,
-            qualities,
-            jobs,
             min_input_bytes,
             probe_only,
-            include_ignored,
-            max_alpha_error,
-            max_pixels,
-            png_level,
-            png_reductions,
-            webp,
+            timings,
             json,
+            analysis,
         } => {
             let options = AnalysisOptions {
-                qualities,
-                jobs,
                 min_input_bytes,
                 probe_only,
-                include_ignored,
-                max_alpha_error,
-                max_pixels,
-                png_level,
-                png_reductions,
-                webp,
-                ..AnalysisOptions::default()
+                ..analysis.into_options()
             };
             let report = analyze_with_progress(root, &out, options, |done, total| {
                 if done % 25 == 0 || done == total {
@@ -377,6 +416,21 @@ fn run(cli: Cli) -> Result<()> {
                 )?;
                 for (status, count) in &report.status_counts {
                     writeln!(stdout, "{status}: {count}")?;
+                }
+            }
+            if let (true, Some(performance)) = (timings, &report.performance) {
+                eprintln!(
+                    "wall {:.2}s; first result {}; {} workers; {} cache hits; {} duplicates reused",
+                    performance.wall_seconds,
+                    performance
+                        .first_result_seconds
+                        .map_or("n/a".into(), |s| format!("{s:.2}s")),
+                    performance.workers,
+                    performance.cache_hits,
+                    performance.duplicate_reuses
+                );
+                for (phase, seconds) in &performance.phase_seconds {
+                    eprintln!("  {phase:<16} {seconds:>8.2}s (summed over workers)");
                 }
             }
         }
@@ -430,42 +484,124 @@ fn run(cli: Cli) -> Result<()> {
                 )?;
             }
         }
-        Commands::Apply { directory, json } => {
-            let report = apply(directory)?;
-            if json {
-                output_json(&mut stdout, &report)?;
+        Commands::Apply {
+            directory,
+            json,
+            lossy,
+            no_lossless,
+            cross_format,
+            accept_warnings,
+            min_score,
+            formats,
+            dry_run,
+        } => {
+            if directory.join("analysis.json").is_file() {
+                let policy = resopt::BatchPolicy {
+                    lossless: !no_lossless,
+                    lossy,
+                    cross_format,
+                    min_score,
+                    formats,
+                    accept_warnings,
+                    resources: None,
+                };
+                if dry_run {
+                    let plan = resopt::plan_report(&directory, &policy)?;
+                    if json {
+                        output_json(&mut stdout, &plan)?;
+                    } else {
+                        for item in &plan.items {
+                            writeln!(
+                                stdout,
+                                "{}\t{}{}\t-{} bytes{}",
+                                item.path.display(),
+                                item.format,
+                                item.quality.map_or(String::new(), |q| format!(" q{q}")),
+                                item.savings_bytes,
+                                item.warning
+                                    .as_ref()
+                                    .map_or(String::new(), |w| format!("\tWARNING {w}"))
+                            )?;
+                        }
+                        writeln!(
+                            stdout,
+                            "Would apply {} files ({} lossy, {} with accepted warnings, {} format changes); {} source bytes saved. Nothing was changed.",
+                            plan.items.len(),
+                            plan.lossy_items,
+                            plan.warning_items,
+                            plan.cross_format_items,
+                            plan.savings_bytes
+                        )?;
+                    }
+                } else {
+                    let status = resopt::apply_report(&directory, &policy)?;
+                    report_batch(&mut stdout, &status, json, "Applied")?;
+                }
             } else {
-                writeln!(
-                    stdout,
-                    "Applied {}; already current {}; saved {} source bytes",
-                    report.changed, report.already_current, report.source_bytes_saved
-                )?;
+                let report = apply(directory)?;
+                if json {
+                    output_json(&mut stdout, &report)?;
+                } else {
+                    writeln!(
+                        stdout,
+                        "Applied {}; already current {}; saved {} source bytes",
+                        report.changed, report.already_current, report.source_bytes_saved
+                    )?;
+                }
             }
         }
         Commands::Restore { directory, json } => {
-            let report = restore(directory)?;
-            if json {
-                output_json(&mut stdout, &report)?;
+            if directory.join("analysis.json").is_file() {
+                let status = resopt::restore_report(&directory)?;
+                report_batch(&mut stdout, &status, json, "Restored")?;
             } else {
-                writeln!(
-                    stdout,
-                    "Restored {}; already original {}",
-                    report.changed, report.already_current
-                )?;
+                let report = restore(directory)?;
+                if json {
+                    output_json(&mut stdout, &report)?;
+                } else {
+                    writeln!(
+                        stdout,
+                        "Restored {}; already original {}",
+                        report.changed, report.already_current
+                    )?;
+                }
             }
         }
     }
     Ok(())
 }
 
-fn available(program: &str) -> bool {
-    Command::new(program)
-        .arg("-version")
-        .stdin(std::process::Stdio::null())
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+/// Per-file outcomes; a batch with failures exits non-zero after reporting them.
+fn report_batch(
+    output: &mut impl Write,
+    status: &resopt::BatchStatus,
+    json: bool,
+    verb: &str,
+) -> Result<()> {
+    if json {
+        output_json(output, status)?;
+    } else {
+        for outcome in status.outcomes.iter().filter(|o| o.outcome != "applied") {
+            writeln!(
+                output,
+                "{}\t{}\t{}",
+                outcome.outcome.to_uppercase(),
+                outcome.path.display(),
+                outcome.error.as_deref().unwrap_or("")
+            )?;
+        }
+        writeln!(
+            output,
+            "{verb} {}; failed {}; saved {} source bytes. Every applied file can be restored with `resopt restore <report>`.",
+            status.applied, status.failed, status.savings_bytes
+        )?;
+    }
+    anyhow::ensure!(
+        status.failed == 0,
+        "{} files could not be processed",
+        status.failed
+    );
+    Ok(())
 }
 
 fn output_json(output: &mut impl Write, value: &impl Serialize) -> Result<()> {
