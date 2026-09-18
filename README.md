@@ -47,7 +47,7 @@ cargo install --path . --locked
 resopt doctor
 ```
 
-构建需要 Rust 1.88+ 和 C 编译器（用于 libdeflate）。严格无损 PNG 后端内嵌 Oxipng。
+构建需要 Rust 1.89+ 和 C 编译器（用于 libdeflate）。严格无损 PNG 后端内嵌 Oxipng。
 JPEG／HEIC 分析目前使用 **macOS ImageIO 与 CoreGraphics**，不需要额外安装 sips、FFmpeg 或 Swift 工具链。
 其他平台可以清点资源，并使用原有的 PNG 计划与应用流程。
 
@@ -107,6 +107,12 @@ resopt analyze /path/to/project --out /tmp/resopt-probe --probe-only
 
 # 要求候选 Alpha 与原图完全一致。
 resopt analyze /path/to/project --out /tmp/resopt-exact-alpha --max-alpha-error 0
+
+# 无损 PNG 候选使用更高的优化力度，并允许无损的颜色类型／位深／调色板缩减。
+resopt analyze /path/to/project --out /tmp/resopt-reduced --png-level 4 --png-reductions
+
+# 调整可分析的最大像素数（默认 16,777,216，上限 67,108,864）。
+resopt analyze /path/to/project --out /tmp/resopt-large --max-pixels 33554432 --jobs 1
 ```
 
 输出目录必须尚不存在，父目录必须存在，且必须位于待扫描项目之外。
@@ -125,6 +131,10 @@ resopt analyze /path/to/project --out /tmp/resopt-exact-alpha --max-alpha-error 
 
 每个候选都会重新解码，验证尺寸、方向、帧数和透明状态，并计算：
 
+- 感知画质分数 SSIMULACRA2：把预乘 Alpha 像素分别合成到黑、白、中灰背景上，在线性光下评分，
+  取三者中的最低分（不透明图片只评一次）。100 表示完全一致，90 以上通常难以察觉，
+  70–90 为轻微差异，50–70 为可察觉差异，低于 50 为明显劣化。超过约 200 万像素的图片按条带计算以限制内存，
+  分数与整图计算相比可能有零点几分的偏差。
 - 在统一 sRGB 预乘 Alpha 像素上的 RGB 平均绝对误差（MAE，按 0–255 标度显示）。
 - 同一像素空间上的 PSNR；像素相同时显示无穷大。
 - 单个像素最大的 Alpha 误差（0–1 标度）。
@@ -195,7 +205,10 @@ resopt serve /tmp/resopt-analysis --port 8417
 
 ### 分析边界
 
-- 每张图片输入上限为 64 MiB，统一浮点解码缓冲上限为 64 MiB；超限会明确报告。
+- 每张图片输入上限为 64 MiB；解码像素数默认上限为 16,777,216（4096×4096），可用 `--max-pixels` 调整，
+  最高 67,108,864。超限会以 `decoded_image_exceeds_max_pixels` 明确报告。
+  分析大图时每个并发任务的峰值内存约为每像素 150 字节（实测 2048×2732 约 0.9 GiB，另加 Oxipng 的开销），
+  内存紧张时请降低 `--jobs` 或 `--max-pixels`。
 - 多帧图片记录帧数和首帧检测信息，但不会转成单帧 JPEG／HEIC。
 - AppIcon、已识别的 `resizing` 资源会解码检查，但不会生成格式转换候选。
 - 音视频、动效、字体、压缩包、矢量图、数据文件等纳入清单，状态为 `inventory_only`，
@@ -230,6 +243,12 @@ resopt plan /path/to/project --policy resopt.example.toml --out /tmp/resopt-revi
 ```
 
 `png_level` 是优化力度而非视觉质量；文件必须变小并同时达到两个收益门槛。
+
+可选的 `reductions = true` 允许无损的位深、颜色类型、灰度和调色板缩减。这类缩减会改写 IHDR／PLTE／tRNS，
+因此校验方式改为：其余所有块及顺序必须逐字节一致，尺寸与隔行设置不变，
+并把两个文件逐行展开为 RGBA16 后比较每个样本——完全透明像素的隐藏 RGB 同样必须一致。
+缩减结果无法通过校验或并不更小时，自动退回严格模式的候选。默认关闭；
+关闭时计划文件与旧版本完全兼容，开启后的计划会被旧版本 resopt 拒绝。
 只有传入 `--policy` 才加载配置；未知字段会报错。这个策略与 `analyze --qualities` 的有损试算相互独立。
 
 应用前会检查整个批次的源文件、资源目录和候选哈希，逐文件写入前还会再次核对。

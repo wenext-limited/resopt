@@ -192,12 +192,12 @@ impl Review {
         match candidate.format.as_str() {
             "png" => {
                 ensure!(!candidate.lossy, "PNG must be lossless");
-                optimizer::verify(&original, &optimized)?;
+                optimizer::verify(&original, &optimized, self.report.options.png_reductions)?;
             }
             "jpeg" | "heic" => {
                 ensure!(candidate.lossy, "JPEG/HEIC requires lossy approval");
-                let before = image_backend::decode(&original)?;
-                let after = image_backend::decode(&optimized)?;
+                let before = image_backend::decode(&original, self.report.options.max_pixels)?;
+                let after = image_backend::decode(&optimized, self.report.options.max_pixels)?;
                 ensure!(
                     before.info.frames == 1 && after.info.frames == 1,
                     "animated images cannot be applied"

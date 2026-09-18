@@ -528,3 +528,103 @@ fn removed_metadata_is_rejected_even_with_updated_hash() {
     );
     assert_eq!(fs::read(path).unwrap(), original);
 }
+
+fn expanded_rgba(bytes: &[u8]) -> Vec<u8> {
+    let mut decoder = png::Decoder::new(Cursor::new(bytes));
+    decoder.set_transformations(png::Transformations::EXPAND);
+    let mut reader = decoder.read_info().unwrap();
+    assert_eq!(
+        reader.output_color_type(),
+        (png::ColorType::Rgba, png::BitDepth::Eight)
+    );
+    let mut buffer = vec![0; reader.output_buffer_size().unwrap()];
+    let frame = reader.next_frame(&mut buffer).unwrap();
+    buffer.truncate(frame.buffer_size());
+    buffer
+}
+
+/// Three-color noise, one color fully transparent with nonzero hidden RGB.
+/// Noise defeats RGBA deflate matches, so a 2-bit palette is clearly smaller.
+fn noise_png() -> Vec<u8> {
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, 128, 128);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder
+            .add_text_chunk("Author".into(), "resopt regression fixture".into())
+            .unwrap();
+        let mut state = 0x2545_f491_u32;
+        let pixels: Vec<u8> = (0..128 * 128)
+            .flat_map(|_| {
+                state = state.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                match (state >> 24) % 3 {
+                    0 => [200, 30, 30, 255],
+                    1 => [30, 30, 200, 255],
+                    _ => [9, 8, 7, 0],
+                }
+            })
+            .collect();
+        encoder
+            .write_header()
+            .unwrap()
+            .write_image_data(&pixels)
+            .unwrap();
+    }
+    bytes
+}
+
+fn reducing_policy() -> Policy {
+    Policy {
+        reductions: true,
+        ..policy()
+    }
+}
+
+#[test]
+fn reductions_plan_is_smaller_keeps_hidden_rgb_and_restores_exactly() {
+    let original = noise_png();
+    let strict_root = tempfile::tempdir().unwrap();
+    asset(strict_root.path(), "picture", &original);
+    let strict_directory = strict_root.path().join("review");
+    let strict = create_plan(strict_root.path(), &strict_directory, policy()).unwrap();
+    let strict_json = fs::read_to_string(strict_directory.join("plan.json")).unwrap();
+    assert!(!strict_json.contains("reductions"));
+
+    let root = tempfile::tempdir().unwrap();
+    let path = asset(root.path(), "picture", &original);
+    let directory = root.path().join("review");
+    let plan = create_plan(root.path(), &directory, reducing_policy()).unwrap();
+    assert_eq!(plan.candidates.len(), 1);
+    assert!(plan.candidates[0].optimized_bytes < strict.candidates[0].optimized_bytes);
+    assert!(read_plan(&directory).unwrap().policy.reductions);
+
+    apply(&directory).unwrap();
+    let applied = fs::read(&path).unwrap();
+    assert!(applied.len() < original.len());
+    // The fixture stores nonzero RGB under alpha=0; it must survive the palette.
+    assert_eq!(expanded_rgba(&applied), expanded_rgba(&original));
+    assert!(
+        applied
+            .windows(b"resopt regression fixture".len())
+            .any(|window| window == b"resopt regression fixture")
+    );
+
+    restore(&directory).unwrap();
+    assert_eq!(fs::read(&path).unwrap(), original);
+}
+
+#[test]
+fn reduced_candidate_is_refused_when_plan_claims_strict_mode() {
+    let root = tempfile::tempdir().unwrap();
+    let original = noise_png();
+    let path = asset(root.path(), "picture", &original);
+    let directory = root.path().join("review");
+    create_plan(root.path(), &directory, reducing_policy()).unwrap();
+    edit_plan(&directory, |plan| {
+        plan["policy"]["reductions"] = json!(false);
+    });
+    let error = apply(&directory).unwrap_err();
+    assert!(format!("{error:#}").contains("non-IDAT chunks changed"));
+    assert_eq!(fs::read(&path).unwrap(), original);
+}

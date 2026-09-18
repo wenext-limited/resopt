@@ -21,11 +21,20 @@ pub(crate) struct Decoded {
     pub pixels: Vec<f32>,
 }
 
+/// Default decoded-pixel cap: a 256 MiB float buffer per decoded image.
+pub const DEFAULT_MAX_PIXELS: usize = 16 * 1024 * 1024;
+/// Hard ceiling for a configured pixel cap (1 GiB float buffer per image).
+pub const MAX_PIXELS_LIMIT: usize = 64 * 1024 * 1024;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageDifference {
     pub rgb_mae_255: f64,
     pub psnr_db: Option<f64>,
     pub max_alpha_error: f32,
+    /// Worst SSIMULACRA2 score over black, white and gray backdrops
+    /// (100 = identical). Absent in reports written before it was measured.
+    #[serde(default)]
+    pub ssimulacra2: Option<f64>,
 }
 
 pub(crate) fn compare(a: &Decoded, b: &Decoded) -> Result<ImageDifference> {
@@ -65,6 +74,7 @@ pub(crate) fn compare(a: &Decoded, b: &Decoded) -> Result<ImageDifference> {
         rgb_mae_255: absolute / channels * 255.0,
         psnr_db: (mse > 0.0).then(|| -10.0 * mse.log10()),
         max_alpha_error: alpha,
+        ssimulacra2: Some(crate::quality::ssimulacra2(a, b)?),
     })
 }
 
@@ -134,13 +144,13 @@ pub(crate) fn check_encoders() -> Result<()> {
     }
     for format in ["jpeg", "heic"] {
         let encoded = encode(&bytes, format, 85).map_err(|error| anyhow::anyhow!("{format} encoder unavailable: {error}; image analysis requires macOS ImageIO access (restrictive sandboxes can block HEIC); use --probe-only for detection without encoding"))?;
-        decode(&encoded)?;
+        decode(&encoded, DEFAULT_MAX_PIXELS)?;
     }
     Ok(())
 }
 
 #[cfg(not(target_os = "macos"))]
-pub(crate) fn decode(_: &[u8]) -> Result<Decoded> {
+pub(crate) fn decode(_: &[u8], _: usize) -> Result<Decoded> {
     anyhow::bail!("image_analysis_requires_macos_imageio")
 }
 #[cfg(not(target_os = "macos"))]
@@ -171,7 +181,7 @@ mod apple {
         unsafe { CGImageSource::with_data(&data, None) }.context("imageio_cannot_read_image")
     }
 
-    pub(crate) fn decode(bytes: &[u8]) -> Result<Decoded> {
+    pub(crate) fn decode(bytes: &[u8], max_pixels: usize) -> Result<Decoded> {
         let source = source(bytes)?;
         // SAFETY: Retained source; no mutable aliases or incorrectly typed options.
         let (frames, decoder_type, image, orientation) = unsafe {
@@ -202,14 +212,14 @@ mod apple {
         };
         let width = CGImage::width(Some(&image));
         let height = CGImage::height(Some(&image));
-        let length = width
+        let pixel_count = width
             .checked_mul(height)
-            .and_then(|n| n.checked_mul(4))
             .context("image_dimensions_overflow")?;
         ensure!(
-            width > 0 && height > 0 && length <= 16 * 1024 * 1024,
-            "decoded_image_exceeds_64_mib_float_buffer"
+            width > 0 && height > 0 && pixel_count <= max_pixels.min(MAX_PIXELS_LIMIT),
+            "decoded_image_exceeds_max_pixels"
         );
+        let length = pixel_count * 4;
         let mut pixels = vec![0_f32; length];
         // SAFETY: Static color space identifier is provided by CoreGraphics.
         let space = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }))
@@ -332,7 +342,7 @@ mod tests {
 
     #[test]
     fn opaque_alpha_channel_is_not_transparency() {
-        let decoded = decode(&png(255)).unwrap();
+        let decoded = decode(&png(255), DEFAULT_MAX_PIXELS).unwrap();
         assert!(!decoded.info.has_transparent_pixels);
         assert_eq!(decoded.info.transparent_pixels, 0);
     }
@@ -350,7 +360,7 @@ mod tests {
                 .write_image_data(&[0, 0, 0, 0, 0, 0, 255, 254])
                 .unwrap();
         }
-        let image = decode(&bytes).unwrap();
+        let image = decode(&bytes, DEFAULT_MAX_PIXELS).unwrap();
         assert!(image.info.has_transparent_pixels);
         assert_eq!(image.info.transparent_pixels, 1);
     }
@@ -358,10 +368,10 @@ mod tests {
     #[test]
     fn transparent_heic_retains_alpha_and_can_be_decoded() {
         let bytes = png(128);
-        let original = decode(&bytes).unwrap();
+        let original = decode(&bytes, DEFAULT_MAX_PIXELS).unwrap();
         assert_eq!(original.info.transparent_pixels, 8192);
         let heic = encode(&bytes, "heic", 85).unwrap();
-        let decoded = decode(&heic).unwrap();
+        let decoded = decode(&heic, DEFAULT_MAX_PIXELS).unwrap();
         assert!(decoded.info.decoder_type.contains("heic"));
         assert!(decoded.info.has_transparent_pixels);
         let difference = compare(&original, &decoded).unwrap();
@@ -374,10 +384,10 @@ mod tests {
     #[test]
     fn opaque_image_can_compare_jpeg_and_heic() {
         let bytes = png(255);
-        let original = decode(&bytes).unwrap();
+        let original = decode(&bytes, DEFAULT_MAX_PIXELS).unwrap();
         for format in ["jpeg", "heic"] {
             let encoded = encode(&bytes, format, 75).unwrap();
-            let decoded = decode(&encoded).unwrap();
+            let decoded = decode(&encoded, DEFAULT_MAX_PIXELS).unwrap();
             let difference = compare(&original, &decoded).unwrap();
             assert!(difference.rgb_mae_255.is_finite());
             assert!(difference.max_alpha_error <= 0.000001);

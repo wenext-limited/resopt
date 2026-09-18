@@ -1,6 +1,10 @@
 # PNG optimization effort (0..6), not lossy quality. Higher is slower.
 png_level = 2
 
+# Optional: allow lossless bit-depth, color-type and palette reductions.
+# Verified on expanded RGBA16 samples instead of raw buffers. Default false.
+# reductions = true
+
 # Only consider sources >= 50 KiB.
 min_input_bytes = 51200
 

@@ -12,6 +12,8 @@ mod filesystem;
 mod image_backend;
 mod optimizer;
 mod plan;
+mod png_pixels;
+mod quality;
 mod references;
 mod report;
 mod review;
@@ -23,7 +25,9 @@ pub use analysis::{
     AnalysisOptions, AnalysisReport, ImageCandidate, ResourceAnalysis, analyze,
     analyze_with_progress,
 };
-pub use image_backend::{ImageDifference, ImageInfo, image_backend_available};
+pub use image_backend::{
+    DEFAULT_MAX_PIXELS, ImageDifference, ImageInfo, MAX_PIXELS_LIMIT, image_backend_available,
+};
 pub use report::refresh_report;
 pub use resources::{Resource, ResourceInventory, inventory, inventory_with_options};
 pub use scan_options::ScanOptions;

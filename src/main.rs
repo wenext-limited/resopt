@@ -58,6 +58,15 @@ enum Commands {
         /// Maximum per-pixel alpha error (0 is exact).
         #[arg(long, default_value_t = 1.0 / 255.0 + 0.000001)]
         max_alpha_error: f32,
+        /// Largest decoded image to analyze, in pixels (16 bytes each per decode).
+        #[arg(long, default_value_t = resopt::DEFAULT_MAX_PIXELS)]
+        max_pixels: usize,
+        /// oxipng effort (0..=6) for the lossless PNG candidate.
+        #[arg(long, default_value_t = Policy::default().png_level)]
+        png_level: u8,
+        /// Allow lossless PNG color-type, bit-depth and palette reductions.
+        #[arg(long)]
+        png_reductions: bool,
         #[arg(long)]
         json: bool,
         /// Include files matched by Git ignore rules.
@@ -261,6 +270,9 @@ fn run(cli: Cli) -> Result<()> {
             probe_only,
             include_ignored,
             max_alpha_error,
+            max_pixels,
+            png_level,
+            png_reductions,
             json,
         } => {
             let options = AnalysisOptions {
@@ -270,6 +282,9 @@ fn run(cli: Cli) -> Result<()> {
                 probe_only,
                 include_ignored,
                 max_alpha_error,
+                max_pixels,
+                png_level,
+                png_reductions,
                 ..AnalysisOptions::default()
             };
             let report = analyze_with_progress(root, &out, options, |done, total| {

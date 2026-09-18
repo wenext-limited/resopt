@@ -328,7 +328,7 @@ fn verify_entry(plan: &Plan, directory: &Path, candidate: &Candidate) -> Result<
             && optimized.len() as u64 == candidate.optimized_bytes,
         "candidate sizes do not match blobs"
     );
-    optimizer::verify(&original, &optimized)?;
+    optimizer::verify(&original, &optimized, plan.policy.reductions)?;
     let current = hash(&read_bounded(&source)?);
     ensure!(
         current == candidate.original_sha256 || current == candidate.optimized_sha256,

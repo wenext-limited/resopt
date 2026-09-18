@@ -26,6 +26,12 @@ pub struct AnalysisOptions {
     pub probe_only: bool,
     /// Lossy HEIC may quantize alpha. 0 requires exact alpha samples.
     pub max_alpha_error: f32,
+    /// Largest decoded image analyzed; each pixel costs 16 bytes per decode.
+    pub max_pixels: usize,
+    /// oxipng effort for the lossless PNG candidate.
+    pub png_level: u8,
+    /// Allow lossless PNG color-type, bit-depth and palette reductions.
+    pub png_reductions: bool,
 }
 impl Default for AnalysisOptions {
     fn default() -> Self {
@@ -37,6 +43,9 @@ impl Default for AnalysisOptions {
             min_savings_bytes: 1,
             probe_only: false,
             max_alpha_error: 1.0 / 255.0 + 0.000001,
+            max_pixels: image_backend::DEFAULT_MAX_PIXELS,
+            png_level: Policy::default().png_level,
+            png_reductions: false,
         }
     }
 }
@@ -47,6 +56,12 @@ impl AnalysisOptions {
             "max_alpha_error must be 0..=1"
         );
         ensure!((1..=8).contains(&self.jobs), "jobs must be 1..=8");
+        ensure!(
+            (1..=image_backend::MAX_PIXELS_LIMIT).contains(&self.max_pixels),
+            "max_pixels must be 1..={}",
+            image_backend::MAX_PIXELS_LIMIT
+        );
+        self.png_policy().validate()?;
         ensure!(
             !self.qualities.is_empty()
                 && self.qualities.len() <= 8
@@ -61,6 +76,14 @@ impl AnalysisOptions {
             "duplicate quality values"
         );
         Ok(())
+    }
+
+    fn png_policy(&self) -> Policy {
+        Policy {
+            png_level: self.png_level,
+            reductions: self.png_reductions,
+            ..Policy::default()
+        }
     }
 }
 
@@ -230,7 +253,7 @@ fn analyze_resource(
         let path = contained_file(root, &resource.path)?;
         let original = bounded_read(&path)?;
         result.sha256 = Some(hash(&original));
-        let decoded = image_backend::decode(&original)?;
+        let decoded = image_backend::decode(&original, options.max_pixels)?;
         result.image = Some(decoded.info.clone());
         result.status = "inspected".into();
         if decoded.info.frames != 1 {
@@ -280,13 +303,13 @@ fn analyze_resource(
             };
             let encoded = match quality {
                 Some(quality) => image_backend::encode(&original, format, quality),
-                None => optimizer::optimize(&original, &Policy::default()),
+                None => optimizer::optimize(&original, &options.png_policy()),
             };
             let checked = (|| -> Result<()> {
                 let bytes = encoded?;
                 trial.bytes = bytes.len() as u64;
                 trial.savings_bytes = (original.len() as u64).saturating_sub(trial.bytes);
-                let candidate = image_backend::decode(&bytes)?;
+                let candidate = image_backend::decode(&bytes, options.max_pixels)?;
                 let difference = image_backend::compare(&decoded, &candidate)?;
                 trial.difference = Some(difference.clone());
                 ensure!(

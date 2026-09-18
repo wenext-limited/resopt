@@ -36,10 +36,16 @@ function setSize(id, value) { $(id).textContent = formatSize(value); $(id).title
 const statusLabels = {candidates_available:'有更小候选',inspected:'已检测',inventory_only:'仅清点',failed:'检测失败'};
 const kindLabels = {image:'图片',vector:'矢量图',video:'视频',audio:'音频',animation:'动效',font:'字体',archive:'压缩包',localization:'本地化',data:'数据文件',unclassified:'未分类'};
 function issueLabel(reason) {
-  const labels = {alpha_error_exceeds_policy:'Alpha 误差超限',transparency_presence_changed:'透明状态改变',non_finite_decoded_samples:'解码数据异常',dimensions_changed:'尺寸改变',orientation_changed:'方向改变',multiple_frames_not_transcoded:'多帧资源仅检测，未转码',app_icon:'AppIcon 保留原格式',resizing:'拉伸资源保留原格式',below_explicit_input_threshold:'低于指定的输入门槛',source_changed_during_analysis:'分析期间源文件发生变化','non-IDAT chunks changed; candidate rejected':'元数据块变化'};
+  const labels = {alpha_error_exceeds_policy:'Alpha 误差超限',transparency_presence_changed:'透明状态改变',non_finite_decoded_samples:'解码数据异常',dimensions_changed:'尺寸改变',decoded_image_exceeds_max_pixels:'像素数超过分析上限（可用 --max-pixels 调整）',orientation_changed:'方向改变',multiple_frames_not_transcoded:'多帧资源仅检测，未转码',app_icon:'AppIcon 保留原格式',resizing:'拉伸资源保留原格式',below_explicit_input_threshold:'低于指定的输入门槛',source_changed_during_analysis:'分析期间源文件发生变化','non-IDAT chunks changed; candidate rejected':'元数据块变化'};
   if (labels[reason]) return labels[reason];
   if (String(reason).endsWith('_optimization_backend_not_implemented')) return '已纳入清单，暂未提供此类型的压缩分析';
   return String(reason);
+}
+function perceptualLabel(score) {
+  if (score >= 90) return '几乎无差异';
+  if (score >= 70) return '轻微差异';
+  if (score >= 50) return '可察觉差异';
+  return '明显劣化';
 }
 const candidateLabel = c => `${String(c.format || '').toUpperCase()} · ${c.lossy ? `质量 ${c.quality ?? '—'}` : '无损'}`;
 let mode = records.some(r => saving(r) > 0) ? 'candidates' : 'all';
@@ -176,12 +182,12 @@ function renderDetail() {
   if(r.image) renderActions(pane,r,c);
   if(variants.length){
     const heading=el('div','metrics-title','全部方案');heading.append(el('span','',`${variants.length} 个方案`));pane.append(heading);
-    const wrap=el('div','table-scroll'),table=el('table'),head=el('thead'),row=el('tr');for(const [label,title] of [['方案','编码格式与质量'],['体积','悬停查看精确字节数'],['节省','相对原文件的源体积收益'],['RGB 误差','sRGB 预乘 Alpha 像素的 MAE，0–255 标度；越低越接近'],['Alpha 误差','最大 Alpha 误差，按百分比显示'],['状态','结构与 Alpha 校验结果，不代表视觉验收']]){const th=el('th','',label);th.scope='col';th.title=title;row.append(th);}head.append(row);table.append(head);const body=el('tbody');
-    variants.forEach((v,i)=>{const row=el('tr',i===Number(chosen)?'selected':'');const name=el('td'),button=el('button','variant-button',candidateLabel(v));button.addEventListener('click',()=>{chosen=i;renderDetail();});name.append(button);const bytes=el('td');bytes.append(sizeNode(v.bytes || null));const saved=el('td',v.savings_bytes>0?'status-ok':'status-muted',v.savings_bytes>0?formatSize(v.savings_bytes):'—');saved.title=v.savings_bytes?`${number(v.savings_bytes)} 字节`:'没有体积收益';const rgb=el('td','',v.difference?Number(v.difference.rgb_mae_255).toFixed(3):'—');if(v.difference){const psnr=`${v.difference.psnr_db==null?'∞':Number(v.difference.psnr_db).toFixed(2)} dB`;rgb.title=`PSNR ${psnr}`;rgb.append(el('small','metric-sub',psnr));}
-      const alpha=el('td','',v.difference?`${(v.difference.max_alpha_error*100).toFixed(2)}%`:'—');const state=el('td',v.valid&&v.artifact?'status-ok':'status-muted',v.rejection?issueLabel(v.rejection):v.artifact?'可审阅':'无体积收益');state.title=v.rejection || '画质仍需审阅';row.append(name,bytes,saved,rgb,alpha,state);body.append(row);});table.append(body);wrap.append(table);pane.append(wrap);
+    const wrap=el('div','table-scroll'),table=el('table'),head=el('thead'),row=el('tr');for(const [label,title] of [['方案','编码格式与质量'],['体积','悬停查看精确字节数'],['节省','相对原文件的源体积收益'],['感知画质','SSIMULACRA2，取黑、白、灰三种背景下的最低分；100 为完全一致，90 以上通常难以察觉'],['RGB 误差','sRGB 预乘 Alpha 像素的 MAE，0–255 标度；越低越接近'],['Alpha 误差','最大 Alpha 误差，按百分比显示'],['状态','结构与 Alpha 校验结果，不代表视觉验收']]){const th=el('th','',label);th.scope='col';th.title=title;row.append(th);}head.append(row);table.append(head);const body=el('tbody');
+    variants.forEach((v,i)=>{const row=el('tr',i===Number(chosen)?'selected':'');const name=el('td'),button=el('button','variant-button',candidateLabel(v));button.addEventListener('click',()=>{chosen=i;renderDetail();});name.append(button);const bytes=el('td');bytes.append(sizeNode(v.bytes || null));const saved=el('td',v.savings_bytes>0?'status-ok':'status-muted',v.savings_bytes>0?formatSize(v.savings_bytes):'—');saved.title=v.savings_bytes?`${number(v.savings_bytes)} 字节`:'没有体积收益';const score=v.difference?.ssimulacra2;const perceptual=el('td',score==null?'status-muted':score>=90?'status-ok':'',score==null?'—':Number(score).toFixed(1));if(score!=null)perceptual.append(el('small','metric-sub',perceptualLabel(score)));const rgb=el('td','',v.difference?Number(v.difference.rgb_mae_255).toFixed(3):'—');if(v.difference){const psnr=`${v.difference.psnr_db==null?'∞':Number(v.difference.psnr_db).toFixed(2)} dB`;rgb.title=`PSNR ${psnr}`;rgb.append(el('small','metric-sub',psnr));}
+      const alpha=el('td','',v.difference?`${(v.difference.max_alpha_error*100).toFixed(2)}%`:'—');const state=el('td',v.valid&&v.artifact?'status-ok':'status-muted',v.rejection?issueLabel(v.rejection):v.artifact?'可审阅':'无体积收益');state.title=v.rejection || '画质仍需审阅';row.append(name,bytes,saved,perceptual,rgb,alpha,state);body.append(row);});table.append(body);wrap.append(table);pane.append(wrap);
   }
   if(r.issues?.length)pane.append(el('div','reasons',r.issues.map(issueLabel).join('；')));
-  const notes=el('details'),summary=el('summary','','分析口径与限制');notes.append(summary,el('p','',`Alpha 最大误差上限：${((report.options?.max_alpha_error || 0)*100).toFixed(3)}%。仅按当前校验条件选择最小候选，RGB/PSNR 指标不替代视觉检查。`),el('p','','非图片资源目前仅清点，多帧图片不会转成单帧。离线报告仅供审阅；本地服务支持逐张确认应用。不测量编译后的 App 包体。'));pane.append(notes);
+  const notes=el('details'),summary=el('summary','','分析口径与限制');notes.append(summary,el('p','',`Alpha 最大误差上限：${((report.options?.max_alpha_error || 0)*100).toFixed(3)}%。仅按当前校验条件选择最小候选，感知画质（SSIMULACRA2）与 RGB/PSNR 指标均不替代视觉检查。`),el('p','','非图片资源目前仅清点，多帧图片不会转成单帧。离线报告仅供审阅；本地服务支持逐张确认应用。不测量编译后的 App 包体。'));pane.append(notes);
   if(!window.matchMedia('(prefers-reduced-motion: reduce)').matches)pane.animate([{opacity:.7,transform:'translateY(2px)'},{opacity:1,transform:'none'}],{duration:140,easing:'ease-out'});
   pane.scrollTop=0;
 }

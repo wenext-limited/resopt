@@ -276,3 +276,143 @@ fn animated_png_is_inspected_without_flattening() {
             .any(|s| s == "multiple_frames_not_transcoded")
     );
 }
+
+fn flat_png(width: u32, height: u32) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, width, height);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_depth(png::BitDepth::Eight);
+        encoder.set_compression(png::Compression::Fast);
+        let pixels: Vec<u8> = (0..width * height)
+            .flat_map(|i| {
+                if (i / 64) % 2 == 0 {
+                    [200, 30, 30, 255]
+                } else {
+                    [30, 30, 200, 255]
+                }
+            })
+            .collect();
+        encoder
+            .write_header()
+            .unwrap()
+            .write_image_data(&pixels)
+            .unwrap();
+    }
+    bytes
+}
+
+#[test]
+fn analysis_rejects_out_of_range_pixel_caps_and_png_levels() {
+    let root = tempfile::tempdir().unwrap();
+    let project = root.path().join("project");
+    fs::create_dir(&project).unwrap();
+    for options in [
+        AnalysisOptions {
+            max_pixels: 0,
+            ..AnalysisOptions::default()
+        },
+        AnalysisOptions {
+            max_pixels: resopt::MAX_PIXELS_LIMIT + 1,
+            ..AnalysisOptions::default()
+        },
+        AnalysisOptions {
+            png_level: 7,
+            ..AnalysisOptions::default()
+        },
+    ] {
+        assert!(analyze(&project, root.path().join("out"), options).is_err());
+        assert!(!root.path().join("out").exists());
+    }
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn analysis_reports_ssimulacra2_for_every_compared_candidate() {
+    let root = tempfile::tempdir().unwrap();
+    let input = root.path().join("project");
+    write(&input, "opaque.png", &png(255));
+    write(&input, "transparent.png", &png(128));
+    let report = analyze(
+        &input,
+        root.path().join("report"),
+        AnalysisOptions::default(),
+    )
+    .unwrap();
+    for resource in &report.resources {
+        assert!(!resource.candidates.is_empty());
+        for candidate in &resource.candidates {
+            let score = candidate
+                .difference
+                .as_ref()
+                .and_then(|difference| difference.ssimulacra2)
+                .unwrap();
+            assert!(score <= 100.0 + 1e-6, "{score}");
+            if !candidate.lossy {
+                assert!((score - 100.0).abs() < 0.01, "{score}");
+            }
+        }
+    }
+}
+
+#[test]
+fn default_pixel_cap_covers_a_full_screen_ipad_background() {
+    const { assert!(resopt::DEFAULT_MAX_PIXELS >= 2048 * 2732) };
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn analysis_honors_the_configured_pixel_cap() {
+    let root = tempfile::tempdir().unwrap();
+    let input = root.path().join("project");
+    write(&input, "image.png", &png(255));
+    let status = |name: &str, max_pixels: usize| {
+        let report = analyze(
+            &input,
+            root.path().join(name),
+            AnalysisOptions {
+                qualities: vec![85],
+                max_pixels,
+                ..AnalysisOptions::default()
+            },
+        )
+        .unwrap();
+        (
+            report.resources[0].status.clone(),
+            report.resources[0].issues.join(","),
+        )
+    };
+    assert_ne!(status("fits", 64 * 64).0, "failed");
+    let (state, issues) = status("capped", 64 * 64 - 1);
+    assert_eq!(state, "failed");
+    assert!(
+        issues.contains("decoded_image_exceeds_max_pixels"),
+        "{issues}"
+    );
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn analysis_png_candidate_uses_configured_reductions() {
+    let root = tempfile::tempdir().unwrap();
+    let input = root.path().join("project");
+    write(&input, "flat.png", &flat_png(256, 256));
+    let png_bytes = |name: &str, png_reductions: bool| {
+        let report = analyze(
+            &input,
+            root.path().join(name),
+            AnalysisOptions {
+                qualities: vec![85],
+                png_reductions,
+                ..AnalysisOptions::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(report.options.png_reductions, png_reductions);
+        let candidate = &report.resources[0].candidates[0];
+        assert_eq!(candidate.format, "png");
+        assert!(candidate.valid, "{:?}", candidate.rejection);
+        candidate.bytes
+    };
+    assert!(png_bytes("reduced", true) < png_bytes("strict", false));
+}

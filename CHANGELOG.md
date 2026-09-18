@@ -1,5 +1,16 @@
 # 更新记录
 
+## 未发布
+
+- `analyze` 为每个候选计算 SSIMULACRA2 感知画质分数（黑、白、灰背景下的最低分），写入
+  `difference.ssimulacra2` 并显示在 HTML 报告中；旧的 `analysis.json` 仍可读取。
+- 解码像素上限由约 419 万提高到默认 16,777,216，并新增 `--max-pixels`（最高 67,108,864）；
+  超限原因改为 `decoded_image_exceeds_max_pixels`。大图的感知评分按条带计算以限制内存。
+- 新增可选的无损 PNG 缩减：策略字段 `reductions` 与 `analyze --png-reductions`。
+  校验逐行比较展开后的 RGBA16 样本，其余块必须逐字节一致；不更小或无法校验时退回严格候选。
+- `analyze` 的无损 PNG 候选不再固定使用默认策略，新增 `--png-level`。
+- 最低 Rust 版本提高到 1.89（`fast-ssim2` 的要求）。
+
 ## 0.2.0
 
 - crates.io 包名为 `resopt-cli`，命令名和 Rust 库名保留 `resopt`。
