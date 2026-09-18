@@ -50,7 +50,7 @@ impl Default for AnalysisOptions {
     }
 }
 impl AnalysisOptions {
-    fn validate(&self) -> Result<()> {
+    pub(crate) fn validate(&self) -> Result<()> {
         ensure!(
             self.max_alpha_error.is_finite() && (0.0..=1.0).contains(&self.max_alpha_error),
             "max_alpha_error must be 0..=1"
@@ -144,7 +144,7 @@ pub fn analyze_with_progress(
     progress: impl Fn(usize, usize) + Sync,
 ) -> Result<AnalysisReport> {
     options.validate()?;
-    if !options.probe_only {
+    if !options.probe_only && image_backend::image_backend_available() {
         image_backend::check_encoders()?;
     }
     let inventory = inventory_with_options(
@@ -204,7 +204,7 @@ pub fn analyze_with_progress(
         backend: if image_backend::image_backend_available() {
             "Apple ImageIO + CoreGraphics sRGB float comparison"
         } else {
-            "ImageIO unavailable on this platform"
+            "Portable PNG lossless; JPEG/HEIC require macOS"
         }
         .into(),
         options,
@@ -271,7 +271,9 @@ fn analyze_resource(
             result.issues.push("below_explicit_input_threshold".into());
             return Ok(());
         }
-        let targets = if decoded.info.has_transparent_pixels {
+        let targets = if !image_backend::image_backend_available() {
+            vec![]
+        } else if decoded.info.has_transparent_pixels {
             vec!["heic"]
         } else {
             vec!["jpeg", "heic"]

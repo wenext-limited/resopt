@@ -9,7 +9,6 @@ use serde::Serialize;
 
 pub const WEB_MAX_INPUT_BYTES: usize = 16 * 1024 * 1024;
 pub const WEB_MAX_PIXELS: usize = 2 * 1024 * 1024;
-const DECODE_LIMIT: usize = WEB_MAX_PIXELS * 16;
 
 #[derive(Debug, Serialize)]
 pub struct PngSummary {
@@ -37,7 +36,7 @@ pub fn optimize_png(bytes: &[u8], effort: u8, reductions: bool) -> Result<Optimi
         "PNG exceeds the 16 MiB browser input limit"
     );
     ensure!(effort <= 4, "browser effort must be 0..=4");
-    let original = decode_png(bytes)?;
+    let original = decode_png(bytes, WEB_MAX_PIXELS)?;
     let candidate = optimizer::optimize(
         bytes,
         &optimizer::Policy {
@@ -52,7 +51,7 @@ pub fn optimize_png(bytes: &[u8], effort: u8, reductions: bool) -> Result<Optimi
     } else {
         bytes.to_vec()
     };
-    let decoded = decode_png(&chosen)?;
+    let decoded = decode_png(&chosen, WEB_MAX_PIXELS)?;
     let score = quality::ssimulacra2(&original, &decoded)?;
     Ok(OptimizedPng {
         summary: PngSummary {
@@ -70,16 +69,17 @@ pub fn optimize_png(bytes: &[u8], effort: u8, reductions: bool) -> Result<Optimi
     })
 }
 
-fn decode_png(bytes: &[u8]) -> Result<Decoded> {
-    let mut reader = png_pixels::reader(bytes, DECODE_LIMIT)?;
+pub(crate) fn decode_png(bytes: &[u8], max_pixels: usize) -> Result<Decoded> {
+    let limit = max_pixels.checked_mul(16).context("pixel limit overflow")?;
+    let mut reader = png_pixels::reader(bytes, limit)?;
     let width = reader.info().width as usize;
     let height = reader.info().height as usize;
     let count = width
         .checked_mul(height)
         .context("PNG dimensions overflow")?;
     ensure!(
-        count > 0 && count <= WEB_MAX_PIXELS,
-        "PNG exceeds the 2 MP browser pixel limit; use the native CLI for larger images"
+        count > 0 && count <= max_pixels,
+        "decoded_image_exceeds_max_pixels"
     );
     ensure!(
         reader.info().animation_control.is_none(),

@@ -22,6 +22,30 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
+    /// Analyze a local project and open its loopback-only review UI. No uploads.
+    Web {
+        #[arg(default_value = ".")]
+        root: PathBuf,
+        /// New report directory outside the project; defaults to a retained temporary directory.
+        #[arg(long)]
+        out: Option<PathBuf>,
+        #[arg(long, default_value_t = 0)]
+        port: u16,
+        #[arg(long)]
+        no_open: bool,
+        #[arg(long, value_delimiter = ',', default_value = "75,85,95")]
+        qualities: Vec<u8>,
+        #[arg(long, default_value_t = 2)]
+        jobs: usize,
+        #[arg(long, default_value_t = resopt::DEFAULT_MAX_PIXELS)]
+        max_pixels: usize,
+        #[arg(long, default_value_t = Policy::default().png_level)]
+        png_level: u8,
+        #[arg(long)]
+        png_reductions: bool,
+        #[arg(long)]
+        include_ignored: bool,
+    },
     /// Report embedded and optional tools. Installs nothing.
     Doctor {
         #[arg(long)]
@@ -130,6 +154,36 @@ fn main() -> ExitCode {
 fn run(cli: Cli) -> Result<()> {
     let mut stdout = io::stdout().lock();
     match cli.command {
+        Commands::Web {
+            root,
+            out,
+            port,
+            no_open,
+            qualities,
+            jobs,
+            max_pixels,
+            png_level,
+            png_reductions,
+            include_ignored,
+        } => {
+            resopt::web(
+                root,
+                resopt::WebOptions {
+                    out,
+                    port,
+                    no_open,
+                    analysis: AnalysisOptions {
+                        qualities,
+                        jobs,
+                        max_pixels,
+                        png_level,
+                        png_reductions,
+                        include_ignored,
+                        ..Default::default()
+                    },
+                },
+            )?;
+        }
         Commands::Serve { directory, port } => resopt::serve(directory, port)?,
         Commands::Report { directory } => {
             let path = resopt::refresh_report(directory)?;

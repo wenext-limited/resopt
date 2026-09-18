@@ -155,8 +155,12 @@ pub(crate) fn check_encoders() -> Result<()> {
 
 #[cfg(not(all(feature = "native", target_os = "macos")))]
 #[cfg(feature = "native")]
-pub(crate) fn decode(_: &[u8], _: usize) -> Result<Decoded> {
-    anyhow::bail!("image_analysis_requires_macos_imageio")
+pub(crate) fn decode(bytes: &[u8], max_pixels: usize) -> Result<Decoded> {
+    ensure!(
+        bytes.starts_with(b"\x89PNG\r\n\x1a\n"),
+        "this_format_requires_macos_imageio"
+    );
+    crate::portable::decode_png(bytes, max_pixels)
 }
 #[cfg(not(all(feature = "native", target_os = "macos")))]
 #[cfg(feature = "native")]

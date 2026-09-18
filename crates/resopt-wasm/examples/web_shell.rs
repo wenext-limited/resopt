@@ -13,7 +13,7 @@ fn main() {
             body {
                 header {
                     a.brand href="./" aria-label="resopt 首页" { span.mark aria-hidden="true" {i{}i{}i{}i{}} strong {"resopt"} span.badge {"Web"} }
-                    div.header-end { span.local { @if native { "图片在 macOS 服务器处理" } @else { "图片仅在本机处理" } } a id="native-link" href="./native.html" hidden[!native] { @if native {"项目批量模式"} @else {"项目 / JPEG / HEIC"} } label.sr-only for="theme" {"页面主题"}
+                    div.header-end { span.local { @if native { "图片仅在本机 macOS 处理" } @else { "图片仅在本机处理" } } a id="native-link" href="./native.html" hidden[!native] { @if native {"项目批量模式"} @else {"项目 / JPEG / HEIC"} } label.sr-only for="theme" {"页面主题"}
                         select id="theme" aria-label="页面主题" { option value="system" {"跟随系统"} option value="light" {"浅色"} option value="dark" {"深色"} }
                     }
                 }
@@ -58,8 +58,9 @@ fn main() {
                             div.empty {h2 {"原图与结果，一目了然"} p {"选择图片后可查看透明背景、像素验证和体积变化。"}}
                         }
                     }
-                    footer { @if native {span {"仅上传筛选出的图片；不上传源码。临时文件处理后删除，跨格式下载需要自行迁移项目引用。"} a href="./" {"PNG 浏览器无损模式 →"}} @else {span {"支持严格无损压缩和无损颜色精简；已完成的图片可单独下载。"} span {"无需上传 · 单次最多 500 张"}} }
+                    footer { @if native {span {"图片只传给本机进程，不离开设备。项目扫描与引用迁移请使用 resopt web。"} a href="./" {"PNG 浏览器无损模式 →"}} @else {span {"支持严格无损压缩和无损颜色精简；已完成的图片可单独下载。"} span {"无需上传 · 单次最多 500 张"}} }
                 }
+                p { "整项目分析与 macOS JPEG / HEIC：在项目目录运行 " code { "resopt web ." } "，打开终端显示的本机地址。" }
                 noscript {"请启用 JavaScript 以运行浏览器内的图片优化。"}
             }
         }

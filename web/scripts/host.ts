@@ -1,10 +1,11 @@
 import { resolve, join } from "node:path";
 import { createNativeApi, MAX_UPLOAD } from "./native-api";
+import { localOrigin } from "./host-policy";
 if (process.platform !== "darwin")
   throw Error("Native image hosting requires macOS");
 const hostname = process.env.HOST || "127.0.0.1";
 const port = Number(process.env.PORT || 8432);
-const origin = process.env.PUBLIC_ORIGIN || `http://${hostname}:${port}`;
+const origin = localOrigin(hostname, port, process.env.PUBLIC_ORIGIN);
 const root = resolve(
   process.env.SITE_DIR || resolve(import.meta.dir, "../dist"),
 );

@@ -73,3 +73,13 @@ test("removing ignore rules restores excluded image candidates", async () => {
       .images.length,
   ).toBe(2);
 });
+
+import { localOrigin } from "../scripts/host-policy";
+test("native hosting never binds a remote interface or origin", () => {
+  expect(localOrigin("127.0.0.1", 8432)).toBe("http://127.0.0.1:8432");
+  for (const host of ["0.0.0.0", "10.86.10.42", "::", "localhost"])
+    expect(() => localOrigin(host, 8432)).toThrow();
+  expect(() =>
+    localOrigin("127.0.0.1", 8432, "http://10.86.10.42:8432"),
+  ).toThrow();
+});

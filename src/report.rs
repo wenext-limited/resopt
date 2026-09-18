@@ -51,12 +51,12 @@ pub(crate) fn render_page(report: &AnalysisReport, token: Option<&str>) -> Resul
         .replace('&', "\\u0026")
         .replace('\u{2028}', "\\u2028")
         .replace('\u{2029}', "\\u2029");
-    Ok(page(&safe, token.is_some()).into_string())
+    Ok(page(&safe, token.is_some(), &report.backend).into_string())
 }
 
 use maud::{DOCTYPE, Markup, PreEscaped, html};
 
-fn page(data: &str, live: bool) -> Markup {
+fn page(data: &str, live: bool, backend: &str) -> Markup {
     html! {
         (DOCTYPE)
         html lang="zh-CN" {
@@ -85,6 +85,7 @@ fn page(data: &str, live: bool) -> Markup {
                     }
                 }
                 main {
+                    p { "本地分析引擎：" (backend) }
                     (overview())
                     (toolbar())
                     div.workspace {

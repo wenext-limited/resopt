@@ -238,7 +238,7 @@ async function add(files: ProjectFile[]) {
   renderList();
   renderDetail();
   say(
-    `已收集 ${rows.length} 张图片，忽略 ${excluded} 张，超限 ${skipped} 张。点击“上传并分析”后，仅图片将发送到当前 macOS 服务器。`,
+    `已收集 ${rows.length} 张图片，忽略 ${excluded} 张，超限 ${skipped} 张。点击“上传并分析”后，仅图片将传给本机进程，不离开设备。`,
   );
 }
 async function collect(read: () => Promise<ProjectFile[]>) {
@@ -430,4 +430,6 @@ void fetch("./api/capabilities")
         : "此站点没有 macOS 后端",
     );
   })
-  .catch(() => say("此站点没有 macOS 后端，请使用原生部署地址。"));
+  .catch(() =>
+    say("此页面需要本机 macOS 进程。推荐运行 resopt web /path/to/project。"),
+  );

@@ -203,3 +203,117 @@ fn loopback_api_requires_session_and_origin_and_applies_only_selected_candidate(
     assert!(result.starts_with("HTTP/1.1 200"), "{result}");
     assert_eq!(fs::read(asset.join("image.png")).unwrap(), original);
 }
+
+#[test]
+fn web_analyzes_local_project_without_uploads_and_serves_review() {
+    let base = tempfile::tempdir().unwrap();
+    let root = base.path().join("project");
+    fs::create_dir(&root).unwrap();
+    fs::create_dir(root.join(".git")).unwrap();
+    fs::write(root.join(".gitignore"), "ignored.png\n").unwrap();
+    let mut original = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut original, 64, 64);
+        encoder.set_color(png::ColorType::Rgba);
+        encoder.set_compression(png::Compression::NoCompression);
+        encoder
+            .write_header()
+            .unwrap()
+            .write_image_data(&[40, 80, 120, 128].repeat(64 * 64))
+            .unwrap();
+    }
+    fs::write(root.join("image.png"), &original).unwrap();
+    fs::write(root.join("ignored.png"), &original).unwrap();
+    let out = base.path().join("analysis");
+    let mut server = Server::new(
+        Command::new(env!("CARGO_BIN_EXE_resopt"))
+            .args([
+                "web",
+                root.to_str().unwrap(),
+                "--out",
+                out.to_str().unwrap(),
+                "--no-open",
+                "--qualities",
+                "85",
+            ])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let mut line = String::new();
+    server.stdout.read_line(&mut line).unwrap();
+    let origin = line
+        .trim()
+        .strip_prefix("Local web: ")
+        .unwrap()
+        .trim_end_matches('/')
+        .to_string();
+    let address = origin.strip_prefix("http://").unwrap();
+    assert!(address.starts_with("127.0.0.1:"));
+    let deadline = std::time::Instant::now() + Duration::from_secs(45);
+    loop {
+        let progress = request(address, "GET", "/api/progress", "", "");
+        assert!(progress.starts_with("HTTP/1.1 200"), "{progress}");
+        let progress: serde_json::Value =
+            serde_json::from_str(progress.split("\r\n\r\n").nth(1).unwrap()).unwrap();
+        assert!(progress["error"].is_null(), "{progress}");
+        if progress["done"] == true {
+            break;
+        }
+        assert!(std::time::Instant::now() < deadline, "analysis timed out");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let page = request(address, "GET", "/", "", "");
+    assert!(page.contains("report-data"));
+    let data = page
+        .split("id=\"report-data\">")
+        .nth(1)
+        .unwrap()
+        .split("</script>")
+        .next()
+        .unwrap();
+    let data: serde_json::Value = serde_json::from_str(data).unwrap();
+    let resources = data["resources"].as_array().unwrap();
+    assert_eq!(resources.len(), 1);
+    assert_eq!(resources[0]["resource"]["path"], "image.png");
+    let candidates = resources[0]["candidates"].as_array().unwrap();
+    assert!(
+        candidates
+            .iter()
+            .any(|c| c["format"] == "png" && c["artifact"].is_string())
+    );
+    #[cfg(not(target_os = "macos"))]
+    assert!(candidates.iter().all(|c| c["format"] == "png"));
+    assert_eq!(fs::read(root.join("image.png")).unwrap(), original);
+    let upload = request(
+        address,
+        "POST",
+        "/api/convert",
+        "Content-Type: application/octet-stream\r\n",
+        "file bytes",
+    );
+    assert!(!upload.starts_with("HTTP/1.1 200"));
+    assert!(request(address, "GET", "/../project/image.png", "", "").starts_with("HTTP/1.1 404"));
+    let report = out.join("analysis.json");
+    drop(server);
+    assert!(report.is_file());
+}
+
+#[test]
+fn web_rejects_existing_or_in_project_output_before_startup() {
+    let root = tempfile::tempdir().unwrap();
+    for out in [root.path().to_path_buf(), root.path().join("analysis")] {
+        let result = Command::new(env!("CARGO_BIN_EXE_resopt"))
+            .args([
+                "web",
+                root.path().to_str().unwrap(),
+                "--out",
+                out.to_str().unwrap(),
+                "--no-open",
+            ])
+            .output()
+            .unwrap();
+        assert!(!result.status.success());
+        assert!(result.stdout.is_empty());
+    }
+}

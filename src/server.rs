@@ -23,8 +23,12 @@ struct Action {
 /// Serve an existing analysis on loopback. Port 0 chooses an available port.
 /// The printed URL is the entry point; terminate the process to stop serving.
 pub fn serve(directory: impl AsRef<Path>, port: u16) -> Result<()> {
-    let review = Review::open(directory.as_ref())?;
     let server = Server::http(("127.0.0.1", port)).map_err(|e| anyhow::anyhow!("{e}"))?;
+    serve_on(directory.as_ref(), server)
+}
+
+pub(crate) fn serve_on(directory: &Path, server: Server) -> Result<()> {
+    let review = Review::open(directory)?;
     let address = server.server_addr().to_string();
     let origin = format!("http://{address}");
     let mut random = [0_u8; 32];
@@ -80,6 +84,13 @@ pub fn serve(directory: impl AsRef<Path>, port: u16) -> Result<()> {
                 200,
                 "text/html; charset=utf-8",
                 html.as_bytes().to_vec(),
+            );
+        } else if request.method() == &Method::Get && route == "/api/progress" {
+            respond(
+                request,
+                200,
+                "application/json",
+                br#"{"done":true}"#.to_vec(),
             );
         } else if request.method() == &Method::Get && route == "/api/state" {
             if header(&request, "X-Resopt-Token") != Some(token.as_str()) {
@@ -170,14 +181,14 @@ pub fn serve(directory: impl AsRef<Path>, port: u16) -> Result<()> {
     Ok(())
 }
 
-fn header<'a>(request: &'a Request, name: &str) -> Option<&'a str> {
+pub(crate) fn header<'a>(request: &'a Request, name: &str) -> Option<&'a str> {
     request
         .headers()
         .iter()
         .find(|h| h.field.to_string().eq_ignore_ascii_case(name))
         .map(|h| h.value.as_str())
 }
-fn respond(request: Request, code: u16, media: &str, bytes: Vec<u8>) {
+pub(crate) fn respond(request: Request, code: u16, media: &str, bytes: Vec<u8>) {
     let mut response = Response::from_data(bytes).with_status_code(StatusCode(code));
     for (key, value) in [
         ("Content-Type", media),

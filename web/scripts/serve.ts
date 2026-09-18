@@ -1,5 +1,7 @@
 import { resolve, join } from "node:path";
-const root = resolve(import.meta.dir, "../dist");
+const root = resolve(
+  process.env.SITE_DIR || resolve(import.meta.dir, "../dist"),
+);
 const paths = [
   ...new Bun.Glob("**/*").scanSync({ cwd: root, onlyFiles: true }),
 ];
@@ -12,12 +14,21 @@ const index =
 if (!index) throw Error("Run bun run build first");
 files.set("/", Bun.file(join(root, index)));
 const server = Bun.serve({
-  hostname: "127.0.0.1",
+  hostname: process.env.HOST || "127.0.0.1",
+  maxRequestBodySize: 1024,
   port: Number(process.env.PORT || 8432),
   fetch(request) {
     if (!["GET", "HEAD"].includes(request.method))
       return new Response("Method not allowed", { status: 405 });
-    const file = files.get(new URL(request.url).pathname);
+    const path = new URL(request.url).pathname;
+    if (path === "/api/capabilities")
+      return Response.json({ native: false, mode: "browser-only" });
+    if (path === "/native.html")
+      return new Response(null, {
+        status: 302,
+        headers: { Location: "/", "Cache-Control": "no-store" },
+      });
+    const file = files.get(path);
     if (!file) return new Response("Not found", { status: 404 });
     return new Response(request.method === "HEAD" ? null : file, {
       headers: {

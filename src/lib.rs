@@ -55,3 +55,8 @@ pub use plan::{ApplyReport, Candidate, Plan, apply, create_plan, read_plan, rest
 
 /// Platform-independent, in-memory PNG optimization and image scoring.
 pub mod portable;
+
+#[cfg(feature = "native")]
+mod web;
+#[cfg(feature = "native")]
+pub use web::{WebOptions, web};
