@@ -283,6 +283,9 @@ fn handle(mut request: Request, app: &Arc<App>, session: &Session) {
                 "invalid session; open the URL printed by resopt",
             );
         }
+        if let Some(index) = route.strip_prefix("/source/") {
+            return serve_source(request, app, index);
+        }
         return serve_artifact(request, app, route);
     }
     if !route.starts_with("/api/") {
@@ -497,6 +500,39 @@ fn artifact_path(route: &str) -> Option<PathBuf> {
         && !name.contains("..");
     (matches!(folder, "previews" | "candidates" | "originals") && generated)
         .then(|| Path::new(folder).join(name))
+}
+
+/// The project's own copy of an inventoried image, addressed by report index
+/// only, so images without candidates can still be opened at full size.
+fn serve_source(request: Request, app: &App, index: &str) {
+    let found = index.parse::<usize>().ok().and_then(|index| {
+        let live = app.live.lock().unwrap_or_else(|e| e.into_inner());
+        live.rows
+            .iter()
+            .find(|(row, _)| *row == index)
+            .filter(|(_, analysis)| analysis.resource.kind == "image")
+            .map(|(_, analysis)| {
+                (
+                    analysis.resource.path.clone(),
+                    analysis.resource.format.clone(),
+                )
+            })
+    });
+    let Some((path, format)) = found else {
+        return respond(request, 404, "text/plain", b"Not found".to_vec());
+    };
+    let media = match format.as_str() {
+        "png" => "image/png",
+        "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "heic" | "heif" => "image/heic",
+        _ => "application/octet-stream",
+    };
+    match contained_file(&app.project, &path).and_then(|p| crate::resources::bounded_read(&p)) {
+        Ok(bytes) => respond(request, 200, media, bytes),
+        Err(_) => respond(request, 404, "text/plain", b"Source unavailable".to_vec()),
+    }
 }
 
 fn serve_artifact(request: Request, app: &App, route: &str) {

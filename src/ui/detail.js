@@ -6,7 +6,8 @@ function scoreLabel(score) { return t(score >= 90 ? 'score90' : score >= 70 ? 's
 function drawPreview(r, c, original) {
   const figure = el('figure', 'preview-frame'), caption = el('div', 'preview-label');
   caption.append(el('span', '', original ? t('original') : c ? candidateLabel(c) : t('candidate')));
-  const raw = assetUrl(original ? r.original_artifact : c?.artifact);
+  // Without a staged copy, a live session serves the project's own file by index.
+  const raw = assetUrl(original ? r.original_artifact : c?.artifact) || (original && state.token && r.image ? `source/${indexOf(r)}` : null);
   if (raw) { const link = el('a', '', t('openFull')); link.href = raw; link.target = '_blank'; link.rel = 'noopener'; caption.append(link); }
   const canvas = el('div', 'canvas'); canvas.dataset.background = state.background;
   const src = assetUrl(original ? r.original_preview : c?.preview);
@@ -43,6 +44,10 @@ function renderDetail() {
   pane.append(facts);
   const android = r.resource?.android;
   if (android) pane.append(el('p', 'android-note', `${t('android')}: ${t('androidInfo', android.area, android.res_type || '—', android.name || '—', android.qualifiers?.length ? android.qualifiers.join('-') : '—')}`));
+  if (!variants.length && r.original_preview) {
+    // Nothing smaller was produced (or this format has no enabled target): still show the image.
+    const single = el('div', 'comparison single'); single.append(drawPreview(r, null, true)); pane.append(single);
+  }
   if (variants.length) {
     const controls = el('div', 'comparison-controls'), label = el('label', 'candidate-label', t('compareWith')), select = el('select');
     select.id = 'candidate-select'; label.htmlFor = select.id;

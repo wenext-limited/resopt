@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.6.1 · 2026-09-19
+
+### Fixed
+- Images without a smaller candidate (already-optimal PNGs, and WebP files when `--webp` is off) had no thumbnail or preview. Every decoded image now gets a preview, and a live session can open the project's own file at full size.
+- Such images now say why nothing was proposed ("WebP candidates are off for this run…") and are labelled "No smaller candidate" instead of "Already optimal".
+
+### Changed
+- Interface language follows the browser's preference order, with an explicit "Auto" choice in the selector.
+
 ## 0.6.0 · 2026-09-19
 
 ### Added

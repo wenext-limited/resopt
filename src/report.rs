@@ -115,6 +115,7 @@ fn page(data: &str) -> Markup {
                     div.header-meta {
                         span.read-only id="session-mode" {}
                         select id="language" aria-label="Language" data-i18n-label="language" {
+                            option value="auto" data-i18n="languageAuto" { "Auto" }
                             option value="en" { "English" }
                             option value="zh-CN" { "简体中文" }
                         }

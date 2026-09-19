@@ -35,3 +35,4 @@ dialog h3{font-size:13px;margin:16px 0 6px}.check{display:flex;gap:9px;align-ite
 @media(forced-colors:active){.resource-row[aria-selected=true]{outline:2px solid Highlight}}
 .toolbar{flex-wrap:wrap}.search{min-width:220px}
 .duplicate-block{border:1px solid var(--line);border-radius:8px;padding:12px;margin:14px 0;font-size:12px;display:flex;flex-direction:column;gap:4px}.duplicate-block .link-button{padding:0;text-align:left;font-size:11px}.duplicate-block .link-button:disabled{color:var(--ink);opacity:1;font-weight:600}
+.comparison.single{grid-template-columns:minmax(0,1fr)}.comparison.single .canvas{height:260px}

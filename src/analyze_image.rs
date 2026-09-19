@@ -94,7 +94,11 @@ pub(crate) fn trials(
             trials.extend(lossy("heic"));
         }
     }
-    if options.webp && !in_catalog(&resource.path) && resource.origin != "catalog_rendition" {
+    let webp_target = !in_catalog(&resource.path) && resource.origin != "catalog_rendition";
+    if !options.webp && webp_target && (android || resource.format == "webp") {
+        issues.push("webp_candidates_disabled".into());
+    }
+    if options.webp && webp_target {
         let gate = |lossless: bool| {
             if android {
                 android::webp_compatibility(min_sdk, lossless, has_alpha)
@@ -173,6 +177,14 @@ fn analyze_into(
     })?;
     result.image = Some(decoded.info.clone());
     result.fingerprint = crate::similarity::fingerprint(&decoded);
+    // Every decoded image gets a thumbnail, not only those with candidates:
+    // already-optimal, excluded and format-locked images must be viewable too.
+    let preview = PathBuf::from(format!("previews/{index}-original.png"));
+    let thumbnail = timings.time(Phase::Preview, || image_backend::preview(&decoded))?;
+    timings.time(Phase::Write, || {
+        write_artifact(&out.join(&preview), &thumbnail)
+    })?;
+    result.original_preview = Some(preview);
     if decoded.info.frames != 1 {
         result.issues.push("multiple_frames_not_transcoded".into());
         return Ok(());
@@ -309,14 +321,10 @@ fn analyze_into(
         .min_by_key(|(_, candidate)| candidate.bytes)
         .map(|(index, _)| index);
     if result.candidates.iter().any(|c| c.artifact.is_some()) {
-        let preview = PathBuf::from(format!("previews/{index}-original.png"));
-        let thumbnail = timings.time(Phase::Preview, || image_backend::preview(&decoded))?;
         let artifact = PathBuf::from(format!("originals/{index}.{}", resource.format));
-        timings.time(Phase::Write, || -> Result<()> {
-            write_artifact(&out.join(&preview), &thumbnail)?;
+        timings.time(Phase::Write, || {
             write_artifact(&out.join(&artifact), original)
         })?;
-        result.original_preview = Some(preview);
         result.original_artifact = Some(artifact);
         result.status = "candidates_available".into();
     }

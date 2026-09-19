@@ -18,7 +18,7 @@ use std::{
 };
 
 /// Bump when the entry layout or any cached measurement changes meaning.
-const CACHE_SCHEMA: u32 = 2;
+const CACHE_SCHEMA: u32 = 3;
 const MAX_ENTRY_FILE_BYTES: u64 = 64 * 1024 * 1024;
 /// Default size bound; the oldest entries are pruned after each analysis.
 pub(crate) const DEFAULT_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
