@@ -42,6 +42,10 @@ const indexOf = r => state.records.indexOf(r);
 const operation = r => state.operations[indexOf(r)];
 const isApplied = r => { const s = operation(r); return !!s && s.state !== 'original'; };
 const isOptimized = r => operation(r)?.state === 'applied';
+function operationBadge(r) {
+  const status = operation(r)?.state;
+  return status === 'partial' ? t('operationPartial') : status === 'conflict' ? t('operationConflict') : '';
+}
 function appliedSavings(r) {
   const s = operation(r);
   return s?.state === 'applied' ? (r.candidates?.[s.candidate]?.savings_bytes || 0) : 0;
@@ -223,13 +227,12 @@ function renderList() {
     const identity = el('span', 'identity'), thumb = el('span', 'thumb'), src = assetUrl(r.original_preview);
     if (src) { const img = el('img'); img.src = src; img.alt = ''; img.loading = 'lazy'; img.decoding = 'async'; thumb.append(img); }
     else thumb.textContent = String(r.resource?.format || 'file').toUpperCase().slice(0, 5);
-    const copy = el('span', 'file-copy'), name = el('span', 'filename-row'), optimized = el('span', 'optimized-badge', t('modeApplied'));
-    optimized.hidden = !isOptimized(r); name.append(el('span', 'filename', basename(pathText(r))), optimized);
-    copy.append(name, el('span', 'file-context', `${String(r.resource?.format || '').toUpperCase()} · ${pathText(r).replace(/[\\/]?[^\\/]+$/, '')}`));
+    const copy = el('span', 'file-copy');
+    copy.append(el('span', 'filename', basename(pathText(r))), el('span', 'file-context', `${String(r.resource?.format || '').toUpperCase()} · ${pathText(r).replace(/[\\/]?[^\\/]+$/, '')}`));
     identity.append(thumb, copy);
     const saved = recommendedSavings(r), cell = el('span', saved ? 'number saving' : 'number status-muted');
-    if (isOptimized(r)) cell.append(sizeNode(appliedSavings(r)), el('small', 'optimized-copy', `✓ ${t('modeApplied')}`));
-    else if (isApplied(r)) cell.append(el('span', 'badge warn', t('modeApplied')));
+    if (isOptimized(r)) cell.append(operationStatus('success', '✓', t('modeApplied')));
+    else if (isApplied(r)) cell.append(operationStatus('warning', '!', operationBadge(r)));
     else if (saved) cell.append(sizeNode(saved), el('small', '', `−${formatPercent(saved / (r.resource.bytes || 1))}`));
     else if (hasWarningCandidate(r)) cell.append(el('span', 'badge warn', t('modeWarnings')));
     else cell.append(el('span', '', '—'));
@@ -247,6 +250,10 @@ function renderList() {
   $('range').textContent = `${total ? t('range', count(start + 1), count(Math.min(start + PAGE_SIZE, total)), count(total)) : t('none')} · ${t('selectedCount', count(state.selectedRecords.size))}`;
   $('page-number').textContent = `${total ? state.page + 1 : 0} / ${Math.ceil(total / PAGE_SIZE)}`;
   $('previous').disabled = state.page === 0; $('next').disabled = start + PAGE_SIZE >= total;
+}
+function operationStatus(kind, symbol, label) {
+  const status = el('span', `operation-status ${kind}`), icon = el('span', 'operation-icon', symbol);
+  icon.setAttribute('aria-hidden', 'true'); status.append(icon, el('span', '', label)); return status;
 }
 function selectRecord(r, event = {}) {
   const result = selectionAfterClick(state.selectedRecords, state.selectionAnchor, r, state.filtered, !!event.shiftKey, !!event.altKey);

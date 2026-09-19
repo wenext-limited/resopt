@@ -37,6 +37,18 @@ test('batch policy prefers an explicit multi-selection over the current view', (
   assert.deepEqual([...batchPolicy().resources], [0, 2]);
 });
 
+test('operation badges distinguish successful apply from warning states', () => {
+  const source = ui('app.js');
+  const start = source.indexOf('function operationBadge');
+  const end = source.indexOf('function appliedSavings', start);
+  const labels = { operationPartial: '未完成', operationConflict: '有冲突' };
+  const operation = r => r.operation;
+  const { operationBadge } = vm.runInNewContext(`${source.slice(start, end)}; ({operationBadge})`, { operation, t: key => labels[key] });
+  assert.equal(operationBadge({ operation: { state: 'partial' } }), '未完成');
+  assert.equal(operationBadge({ operation: { state: 'conflict' } }), '有冲突');
+  assert.equal(operationBadge({ operation: { state: 'applied' } }), '');
+});
+
 test('sizes use binary units with readable precision', () => {
   assert.equal(api.formatSize(0), '0 B');
   assert.equal(api.formatSize(1023), '1,023 B');
