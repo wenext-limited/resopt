@@ -87,6 +87,7 @@ export function createNativeApi(binary: string, origin: string) {
           // This host compares JPEG/HEIC only.
           "--no-webp",
           "--no-lossy-png",
+          "--no-near-lossless-heic",
           "--json",
         ],
         { stdout: "ignore", stderr: "pipe" },

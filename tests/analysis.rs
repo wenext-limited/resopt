@@ -162,7 +162,19 @@ fn analysis_inspects_small_images_and_routes_by_actual_alpha() {
             .iter()
             .filter(|c| c.format == "heic")
             .count(),
-        3
+        // The three presets plus the near-lossless quality-100 trial.
+        4
+    );
+    let near_lossless = opaque_result
+        .candidates
+        .iter()
+        .find(|c| c.format == "heic" && c.quality == Some(100))
+        .unwrap();
+    // It is never presented as lossless.
+    assert!(near_lossless.lossy);
+    assert!(
+        near_lossless.artifact.is_none()
+            || near_lossless.notes.contains(&"near_lossless".to_string())
     );
     assert!(
         transparent_result
@@ -178,7 +190,7 @@ fn analysis_inspects_small_images_and_routes_by_actual_alpha() {
                 |c| c.format == "heic" && !c.warnings.iter().any(|w| w != "quality_below_policy")
             )
             .count(),
-        3,
+        4,
         "{:?}",
         transparent_result.candidates
     );

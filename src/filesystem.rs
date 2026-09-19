@@ -86,6 +86,10 @@ pub(crate) struct ProjectLock {
     path: PathBuf,
 }
 
+/// How long a contended lock is retried before it is reported as busy.
+const LOCK_GRACE: std::time::Duration = std::time::Duration::from_millis(300);
+const LOCK_POLL: std::time::Duration = std::time::Duration::from_millis(10);
+
 impl ProjectLock {
     pub(crate) fn acquire(path: PathBuf, busy: &str) -> Result<Self> {
         for _ in 0..8 {
@@ -103,10 +107,21 @@ impl ProjectLock {
                 .write(true)
                 .open(&path)
                 .with_context(|| format!("opening lock {}", path.display()))?;
-            match file.try_lock() {
-                Ok(()) => {}
-                Err(fs::TryLockError::WouldBlock) => bail!("{busy}"),
-                Err(fs::TryLockError::Error(error)) => return Err(error.into()),
+            // A lock just released by this process can stay held for a moment:
+            // a child process being spawned on another thread (git, aapt2)
+            // inherits the descriptor until it execs. Wait briefly before
+            // concluding that someone else really holds the lock.
+            let mut waited = std::time::Duration::ZERO;
+            loop {
+                match file.try_lock() {
+                    Ok(()) => break,
+                    Err(fs::TryLockError::WouldBlock) if waited < LOCK_GRACE => {
+                        std::thread::sleep(LOCK_POLL);
+                        waited += LOCK_POLL;
+                    }
+                    Err(fs::TryLockError::WouldBlock) => bail!("{busy}"),
+                    Err(fs::TryLockError::Error(error)) => return Err(error.into()),
+                }
             }
             let token = format!("pid={} lock={:p}\n", std::process::id(), &file);
             file.set_len(0)?;
@@ -150,7 +165,14 @@ mod tests {
         let first = ProjectLock::acquire(path.clone(), "busy").unwrap();
         let error = ProjectLock::acquire(path.clone(), "busy").err().unwrap();
         assert_eq!(error.to_string(), "busy");
+        // A holder that lets go within the grace period does not fail the waiter.
+        let waiter = std::thread::spawn({
+            let path = path.clone();
+            move || ProjectLock::acquire(path, "busy").map(drop)
+        });
+        std::thread::sleep(std::time::Duration::from_millis(60));
         drop(first);
+        waiter.join().unwrap().unwrap();
         assert_eq!(path.exists(), cfg!(windows));
         drop(ProjectLock::acquire(path.clone(), "busy").unwrap());
     }

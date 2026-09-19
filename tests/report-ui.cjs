@@ -172,6 +172,7 @@ test('locale selection and issue sentences', () => {
   assert.match(api.issueText('en', 'audio_optimization_backend_not_implemented'), /no optimizer/);
   assert.match(api.issueText('en', 'metadata_not_carried_over: tEXt, eXIf'), /tEXt, eXIf/);
   assert.match(api.issueText('en', 'palette_colors: 128'), /palette of 128 colours/);
+  assert.match(api.issueText('en', 'near_lossless'), /no lossless mode/);
   assert.equal(api.issueText('en', 'some_new_reason'), 'some_new_reason');
 });
 

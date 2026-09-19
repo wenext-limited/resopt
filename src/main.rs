@@ -45,6 +45,9 @@ struct AnalysisArgs {
     /// Do not compare lossy PNG candidates (palette quantization; on by default).
     #[arg(long)]
     no_lossy_png: bool,
+    /// Do not try HEIC at quality 100 ("near-lossless"; on by default, macOS only).
+    #[arg(long)]
+    no_near_lossless_heic: bool,
     /// Accepted for compatibility; WebP candidates are already on by default.
     #[arg(long, hide = true)]
     webp: bool,
@@ -78,6 +81,7 @@ impl AnalysisArgs {
             png_reductions: self.png_reductions,
             webp: !self.no_webp,
             lossy_png: !self.no_lossy_png,
+            heic_near_lossless: !self.no_near_lossless_heic,
             min_score: self.min_score,
             max_alpha_error: self.max_alpha_error,
             android_min_sdk: self.android_min_sdk,

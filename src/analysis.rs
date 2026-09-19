@@ -57,6 +57,9 @@ pub struct AnalysisOptions {
     /// Compare lossy PNG candidates (palette quantization) for PNG sources.
     /// The file stays a PNG, so names, references and decoders are unaffected.
     pub lossy_png: bool,
+    /// Also try HEIC at encoder quality 100. Apple's encoder has no lossless
+    /// mode, so this is its closest setting: still lossy, and labelled so.
+    pub heic_near_lossless: bool,
     /// Overrides the `minSdk` detected from Gradle files.
     pub android_min_sdk: Option<u32>,
     /// Persistent result cache directory. `None` disables the cache; the CLI
@@ -79,6 +82,7 @@ impl Default for AnalysisOptions {
             png_reductions: false,
             webp: true,
             lossy_png: true,
+            heic_near_lossless: true,
             android_min_sdk: None,
             cache_dir: None,
         }

@@ -11,6 +11,10 @@ use crate::{
 use anyhow::{Result, ensure};
 use std::path::{Path, PathBuf};
 
+/// The encoder's highest quality setting. For HEIC it is "near-lossless": on
+/// real artwork a few percent of samples still change by up to ~10/255.
+pub(crate) const NEAR_LOSSLESS_QUALITY: u8 = 100;
+
 /// Longest side of thumbnails written into the report.
 const PREVIEW_SIDE: u32 = 256;
 
@@ -103,6 +107,12 @@ pub(crate) fn trials(
                 trials.extend(lossy("jpeg"));
             }
             trials.extend(lossy("heic"));
+            if options.heic_near_lossless && !options.qualities.contains(&NEAR_LOSSLESS_QUALITY) {
+                trials.push(Trial {
+                    format: "heic",
+                    quality: Some(NEAR_LOSSLESS_QUALITY),
+                });
+            }
         }
     }
     let webp_target = !in_catalog(&resource.path) && resource.origin != "catalog_rendition";
@@ -350,6 +360,9 @@ fn analyze_into(
             );
             candidate.difference = Some(difference);
             candidate.valid = candidate.rejection.is_none();
+            if format == "heic" && quality == Some(NEAR_LOSSLESS_QUALITY) {
+                candidate.notes.push("near_lossless".into());
+            }
             if format == "png"
                 && let Some(quality) = quality
             {
@@ -586,6 +599,45 @@ mod tests {
                 .filter(|(format, _)| *format == "png")
                 .count(),
             1
+        );
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn near_lossless_heic_is_one_extra_trial_and_never_duplicates_quality_100() {
+        let base = AnalysisOptions {
+            webp: false,
+            lossy_png: false,
+            qualities: vec![85],
+            ..Default::default()
+        };
+        let loose = resource("App/Resources/a.png", "png");
+        let heic = |options: &AnalysisOptions| -> Vec<Option<u8>> {
+            trials(&loose, true, options, None)
+                .0
+                .iter()
+                .filter(|t| t.format == "heic")
+                .map(|t| t.quality)
+                .collect()
+        };
+        assert_eq!(heic(&base), [Some(85), Some(100)]);
+        let off = AnalysisOptions {
+            heic_near_lossless: false,
+            ..base.clone()
+        };
+        assert_eq!(heic(&off), [Some(85)]);
+        let explicit = AnalysisOptions {
+            qualities: vec![85, 100],
+            ..base
+        };
+        assert_eq!(heic(&explicit), [Some(85), Some(100)]);
+        // Android never receives HEIC, near-lossless or not.
+        let android = resource("app/src/main/res/drawable/a.png", "png");
+        assert!(
+            trials(&android, true, &explicit, Some(21))
+                .0
+                .iter()
+                .all(|t| t.format != "heic")
         );
     }
 }

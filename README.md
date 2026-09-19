@@ -76,6 +76,7 @@ resopt serve /path/to/report
 ```sh
 resopt web . --no-webp                  # skip WebP candidates (on by default for loose files and Android)
 resopt web . --no-lossy-png             # skip palette-reduced PNG candidates (on by default)
+resopt web . --no-near-lossless-heic    # skip the HEIC quality-100 candidate (macOS, on by default)
 resopt web . --png-reductions           # allow lossless PNG palette/bit-depth reductions
 resopt web . --qualities 85             # one quality level for a faster first pass
 resopt web . --min-score 90             # stricter perceptual threshold (default 80)
@@ -146,7 +147,8 @@ A browser-only edition (static site, WebAssembly) optimizes individual PNG files
 - The inventory lists files on disk. It does not know which files a particular build target, flavor or variant includes.
 - A perceptual score helps you prioritize; it does not replace looking at the image, especially for UI art with fine edges.
 - Lossy PNG uses at most 256 palette colours without dithering. Images with soft transparency usually exceed the default Alpha tolerance and are offered as warnings rather than recommendations; raise `--max-alpha-error` if that trade-off is acceptable for your artwork.
-- HEIC candidates are always lossy: Apple's encoder has no lossless mode (at quality 100, 2–17% of samples still change), so resopt does not offer a "lossless HEIC".
+- HEIC candidates are always lossy: Apple's encoder has no lossless mode (at quality 100, 2–17% of samples still change), so resopt does not offer a "lossless HEIC". It offers quality 100 as a clearly labelled *near-lossless* candidate instead.
+- Existing HEIC files are not rewritten losslessly. Measured on 692 real app HEIC files, removable metadata (Exif, XMP) was 0.15% of their bytes and none contained a thumbnail, which does not justify rewriting the container.
 - App icons, sliced (resizable) catalog images and animated images are inspected but never converted. Animated images are never flattened.
 - WebP is not offered for asset-catalog renditions.
 - Reference migration covers statically resolvable references. Names built at runtime, third-party decoders and references outside the scanned directory need your review; ambiguous references block the change instead of guessing.

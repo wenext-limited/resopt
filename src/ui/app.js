@@ -35,7 +35,8 @@ function sizeNode(value, cls) {
   return node;
 }
 function candidateLabel(c) {
-  return `${String(c.format || '').toUpperCase()} · ${c.lossy ? t('quality', c.quality ?? '—') : t('lossless')}`;
+  const setting = !c.lossy ? t('lossless') : c.format === 'heic' && c.quality === 100 ? t('nearLossless') : t('quality', c.quality ?? '—');
+  return `${String(c.format || '').toUpperCase()} · ${setting}`;
 }
 const pathText = r => String(r.resource?.path || '');
 const indexOf = r => state.records.indexOf(r);

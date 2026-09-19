@@ -18,7 +18,7 @@ use std::{
 };
 
 /// Bump when the entry layout or any cached measurement changes meaning.
-const CACHE_SCHEMA: u32 = 5;
+const CACHE_SCHEMA: u32 = 6;
 const MAX_ENTRY_FILE_BYTES: u64 = 64 * 1024 * 1024;
 /// Default size bound; the oldest entries are pruned after each analysis.
 pub(crate) const DEFAULT_MAX_BYTES: u64 = 2 * 1024 * 1024 * 1024;
@@ -64,6 +64,7 @@ struct KeyMaterial<'a> {
     png_reductions: bool,
     webp: bool,
     lossy_png: bool,
+    heic_near_lossless: bool,
 }
 
 /// Codec identity. ImageIO output can change between macOS builds; the bundled
@@ -132,6 +133,7 @@ impl Cache {
             png_reductions: options.png_reductions,
             webp: options.webp,
             lossy_png: options.lossy_png,
+            heic_near_lossless: options.heic_near_lossless,
         })?))
     }
 
@@ -491,6 +493,10 @@ mod tests {
             },
             AnalysisOptions {
                 lossy_png: !options.lossy_png,
+                ..options.clone()
+            },
+            AnalysisOptions {
+                heic_near_lossless: !options.heic_near_lossless,
                 ..options.clone()
             },
             AnalysisOptions {

@@ -3,12 +3,16 @@
 ## Unreleased
 
 ### Added
+- **Near-lossless HEIC** (macOS, on by default, `--no-near-lossless-heic` to skip): HEIC is also tried at the encoder's highest quality, 100, and labelled "near-lossless". It is still a lossy candidate, scored and approved like the others — Apple's encoder has no lossless mode. On real artwork it saved a median 23% where it beat the source, at a median SSIMULACRA2 of 94.
 - **Lossy PNG candidates** (on by default, `--no-lossy-png` to skip): PNG sources are also reduced to a 256/128/64-colour palette at qualities 95/85/75 by a built-in, deterministic quantizer (median cut with k-means refinement in an alpha-weighted colour space; no dithering). The file stays a PNG, so names, references, asset catalogs and Android resources are unaffected, and it works on every platform. They are judged like any lossy candidate (perceptual score, Alpha error, explicit approval) and never applied by the default lossless batch policy. Nine-patch, launcher-icon and `res/raw` files are never quantized. On large translucent artwork, expect them to appear as Alpha warnings: a 256-entry palette cannot keep every alpha level within the default 1/255 tolerance.
 - **SVGA previews and playback.** SVGA files now render: every SVGA row gets a poster thumbnail plus its canvas size, frame rate and frame count, and a live session plays the animation frame by frame with a scrubber. Rendering follows the reference players (bitmap sprites, transforms, clip paths, matte layers, vector shapes and `keep` frames). A file that cannot be rendered is still optimized; the row says why there is no picture.
 
 ### Changed
 - SVGA optimization now runs on the published [`svga`](https://crates.io/crates/svga) crate, extracted from resopt's own implementation. Results on real files are byte-for-byte unchanged. Embedded images are edited by position (svga 0.1.1), so an image stored under a key that is not valid UTF-8 is optimized too.
 - WebP candidates are compared by default for loose files and Android resources; pass `--no-webp` to skip them. `--webp` is still accepted and has no effect.
+
+### Fixed
+- A project lock released a moment earlier could still read as busy while another thread was starting a helper process (git, aapt2), which could fail one file of a batch. Acquiring now waits briefly before reporting the project as busy.
 
 ## 0.6.1 · 2026-09-19
 
