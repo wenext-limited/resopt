@@ -42,21 +42,22 @@ fn optimize_with(original: &[u8], png: &Policy, cancelled: &dyn Fn() -> bool) ->
     let document = rules::open(original)?;
     let mut edited = document.clone();
     let (mut images, mut images_optimized) = (0, 0);
-    for image in document.images() {
+    // Entries are addressed by position, which also reaches keys that are not
+    // valid UTF-8. Replacing a value never moves an entry, so positions in
+    // `document` stay valid for `edited`.
+    for (position, image) in document.images().enumerate() {
         ensure!(!cancelled(), CANCELLED);
         if image.kind() != ValueKind::Png {
             continue;
         }
         images += 1;
-        // `replace_image` addresses entries by UTF-8 key, as the schema requires.
-        let Some(key) = image.key() else { continue };
         // A PNG the optimizer cannot handle stays as it is.
         let smaller = optimizer::optimize(image.value(), png)
             .ok()
             .filter(|candidate| candidate.len() < image.value().len());
         if let Some(candidate) = smaller {
             edited = edited
-                .replace_image(key, &candidate)
+                .replace_image_at(position, &candidate)
                 .map_err(Refusal::from)?;
             images_optimized += 1;
         }

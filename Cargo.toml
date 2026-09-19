@@ -49,7 +49,7 @@ xcassets = { version = "0.3", optional = true }
 rayon = { version = "1", optional = true }
 fast-ssim2 = "0.8.2"
 webp = { version = "0.3.1", default-features = false, optional = true }
-svga = { version = "0.1", features = ["libdeflate"], optional = true }
+svga = { version = "0.1.1", features = ["libdeflate"], optional = true }
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"], optional = true }
 svgtypes = { version = "0.16", optional = true }
 

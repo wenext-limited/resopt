@@ -353,3 +353,33 @@ fn zlib_bombs_stop_at_the_inflated_size_cap() {
         Some(Refusal::Unsupported("svga_input_exceeds_limit"))
     );
 }
+
+/// A key that is not valid UTF-8 cannot be addressed by name; entries are
+/// edited by position, so such an image is optimized like any other and the
+/// key bytes survive untouched.
+#[test]
+fn an_image_under_a_non_utf8_key_is_optimized_and_keeps_its_key_bytes() {
+    let odd_key: &[u8] = &[0xff, 0xfe, b'k'];
+    let entry = |key: &[u8], value: &[u8]| field(3, &[field(1, key), field(2, value)].concat());
+    let proto = [
+        header(),
+        entry(odd_key, &png_image(1)),
+        entry(b"img_1", &png_image(2)),
+        sprite(1.0),
+    ]
+    .concat();
+    let original = pack(&proto);
+    let optimized = optimize(&original, &Policy::default()).unwrap();
+    verify(&original, &optimized).unwrap();
+    let read = |bytes: &[u8]| -> Vec<(Vec<u8>, usize)> {
+        Document::from_bytes(bytes)
+            .unwrap()
+            .images()
+            .map(|image| (image.key_bytes().to_vec(), image.value().len()))
+            .collect()
+    };
+    let (before, after) = (read(&original), read(&optimized));
+    assert_eq!(after[0].0, odd_key);
+    assert_eq!(after[1].0, b"img_1");
+    assert!(before.iter().zip(&after).all(|(old, new)| new.1 < old.1));
+}

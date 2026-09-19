@@ -1106,9 +1106,9 @@ checksum = "7da8b5736845d9f2fcb837ea5d9e2628564b3b043a70948a3f0b778838c5fb4f"
 
 [[package]]
 name = "svga"
-version = "0.1.0"
+version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fcdb4d4147b87ae3c8773ceaaacda0d721598fc0d003600bec1898727caeb026"
+checksum = "54a46eb965f853b5fba1eff8119baede39a0c2bbe75af781df2ea70ba2d4bd31"
 dependencies = [
  "flate2",
  "libdeflater",
