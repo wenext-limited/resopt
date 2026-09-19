@@ -114,6 +114,13 @@ impl Renderer {
         })
     }
 
+    /// The animation's own canvas in view-box units, rounded to whole pixels.
+    /// Unlike `output_size` this is never capped to the render limit.
+    pub(crate) fn canvas_size(&self) -> (u32, u32) {
+        let round = |side: f32| side.round().clamp(1.0, u32::MAX as f32) as u32;
+        (round(self.view_box.0), round(self.view_box.1))
+    }
+
     pub(crate) fn frame_count(&self) -> usize {
         self.frame_count
     }

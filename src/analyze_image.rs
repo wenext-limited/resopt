@@ -175,7 +175,7 @@ fn attach_animation_preview(
         let renderer = crate::svga_render::Renderer::new(original)?;
         let poster = renderer.poster_frame();
         let frame = renderer.render(poster, PREVIEW_SIDE)?;
-        let (width, height) = renderer.output_size(u32::MAX);
+        let (width, height) = renderer.canvas_size();
         let info = crate::analysis::AnimationInfo {
             width,
             height,

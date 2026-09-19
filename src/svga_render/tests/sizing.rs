@@ -140,3 +140,21 @@ fn one_renderer_serves_several_threads() {
     });
     assert_eq!(corners, [RED; 4]);
 }
+
+#[test]
+fn canvas_size_reports_the_real_view_box_even_above_the_render_cap() {
+    let red = solid_png(2, 2, [255, 0, 0, 255]);
+    let bytes = file(
+        &movie(
+            3000.0,
+            1500.4,
+            1,
+            vec![sprite("a", vec![placed(0.0, 0.0, 2.0, 2.0)])],
+        ),
+        &[("a", &red)],
+    );
+    let renderer = Renderer::new(&bytes).unwrap();
+    assert_eq!(renderer.canvas_size(), (3000, 1500));
+    // Rendering stays capped; only the reported canvas is uncapped.
+    assert_eq!(renderer.output_size(u32::MAX), (2048, 1024));
+}
