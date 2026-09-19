@@ -44,7 +44,7 @@ def workflow_smoke_test(binary):
         report = root / 'report'
         run = lambda *args: subprocess.run([str(binary), *args], check=True, capture_output=True, text=True)
         run('doctor')
-        run('analyze', str(project), '--out', str(report), '--webp', '--no-cache', '--qualities', '85')
+        run('analyze', str(project), '--out', str(report), '--no-cache', '--qualities', '85')
         analysis = json.loads((report / 'analysis.json').read_text(encoding='utf-8'))
         row = next(r for r in analysis['resources'] if r['resource']['path'].endswith('gradient.png'))
         formats = {c['format'] for c in row['candidates'] if c.get('artifact')}

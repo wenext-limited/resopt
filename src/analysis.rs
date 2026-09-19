@@ -51,7 +51,8 @@ pub struct AnalysisOptions {
     pub png_level: u8,
     /// Allow lossless PNG color-type, bit-depth and palette reductions.
     pub png_reductions: bool,
-    /// Include WebP candidates for loose files and Android resources.
+    /// Compare WebP candidates for loose files and Android resources. On by
+    /// default; asset-catalog renditions never receive WebP.
     pub webp: bool,
     /// Overrides the `minSdk` detected from Gradle files.
     pub android_min_sdk: Option<u32>,
@@ -73,7 +74,7 @@ impl Default for AnalysisOptions {
             max_pixels: image_backend::DEFAULT_MAX_PIXELS,
             png_level: Policy::default().png_level,
             png_reductions: false,
-            webp: false,
+            webp: true,
             android_min_sdk: None,
             cache_dir: None,
         }

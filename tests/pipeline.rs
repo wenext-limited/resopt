@@ -342,6 +342,8 @@ fn every_decoded_image_gets_a_preview_even_without_candidates() {
         &first,
         AnalysisOptions {
             jobs: 1,
+            // The case being tested: nothing smaller is produced for these files.
+            webp: false,
             ..Default::default()
         },
     )
@@ -360,6 +362,8 @@ fn every_decoded_image_gets_a_preview_even_without_candidates() {
         &out,
         AnalysisOptions {
             jobs: 1,
+            // The case being tested: nothing smaller is produced for these files.
+            webp: false,
             ..Default::default()
         },
     )

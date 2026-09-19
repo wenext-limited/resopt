@@ -20,7 +20,7 @@ function snapshot(root) {
 }
 const before = snapshot(project);
 const out = join(mkdtempSync(join(tmpdir(), 'resopt-e2e-report-')), 'report');
-const server = spawn(binary, ['web', project, '--out', out, '--no-open', '--no-cache', '--webp', '--min-score', '90'], { stdio: ['ignore', 'pipe', 'inherit'] });
+const server = spawn(binary, ['web', project, '--out', out, '--no-open', '--no-cache', '--min-score', '90'], { stdio: ['ignore', 'pipe', 'inherit'] });
 const url = await new Promise((resolve, reject) => { server.stdout.on('data', chunk => { const m = String(chunk).match(/Local web: (\S+)/); if (m) resolve(m[1]); }); server.on('exit', code => reject(new Error(`resopt exited ${code}`))); });
 const browser = await launch();
 const step = async (name, work) => { await work(); console.log(`ok - ${name}`); };

@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+- WebP candidates are compared by default for loose files and Android resources; pass `--no-webp` to skip them. `--webp` is still accepted and has no effect.
+
 ## 0.6.1 · 2026-09-19
 
 ### Fixed

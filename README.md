@@ -56,7 +56,7 @@ resopt serve /path/to/report
 ### Useful options
 
 ```sh
-resopt web . --webp                     # also compare WebP (loose files and Android resources)
+resopt web . --no-webp                  # skip WebP candidates (on by default for loose files and Android)
 resopt web . --png-reductions           # allow lossless PNG palette/bit-depth reductions
 resopt web . --qualities 85             # one quality level for a faster first pass
 resopt web . --min-score 90             # stricter perceptual threshold (default 80)
@@ -109,7 +109,7 @@ resopt package-diff before.apk after.apk      # also .aab, .ipa or any zip
 | Project inventory, Git ignore rules, duplicate detection | Yes | Yes |
 | PNG lossless optimization | Yes | Yes |
 | SVGA lossless optimization | Yes | Yes |
-| WebP candidates (`--webp`), lossy and lossless | Yes | Yes¹ |
+| WebP candidates, lossy and lossless (on by default; `--no-webp` to skip) | Yes | Yes¹ |
 | JPEG and HEIC candidates; decoding JPEG/HEIC/GIF/TIFF inputs | Yes (Apple ImageIO) | No |
 | Local review page, apply, batch, restore | Yes | Yes |
 | AAPT2 validation (optional Android SDK), `ffprobe` media details (optional) | Yes | Yes |

@@ -483,7 +483,7 @@ mod tests {
                 ..options.clone()
             },
             AnalysisOptions {
-                webp: true,
+                webp: !options.webp,
                 ..options.clone()
             },
             AnalysisOptions {

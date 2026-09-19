@@ -11,7 +11,10 @@ A disposable copy of a production iOS project (the original checkout was never
 written to): 7,453 files, 115 MB, 2,505 raster images of which 1,941 PNG, 474
 HEIC, 82 WebP and 8 JPEG, in 31 asset catalogs plus loose resources. SVGA files
 were removed from the copy and `ffprobe` was taken off `PATH`, because v0.5.0
-cannot process either; every binary therefore did the same image work.
+cannot process either; every binary therefore did the same image work. WebP
+candidates, which v0.5.0 does not have, were off in every run; they have since
+become the default (`--no-webp` restores the measured configuration), so a cold
+default run now does additional WebP encoding on loose files.
 
 ## Results and ablation
 

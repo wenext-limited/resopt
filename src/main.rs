@@ -38,8 +38,12 @@ struct AnalysisArgs {
     /// Allow lossless PNG color-type, bit-depth and palette reductions.
     #[arg(long)]
     png_reductions: bool,
-    /// Also compare WebP candidates for loose files and Android resources.
+    /// Do not compare WebP candidates (they are on by default for loose files
+    /// and Android resources).
     #[arg(long)]
+    no_webp: bool,
+    /// Accepted for compatibility; WebP candidates are already on by default.
+    #[arg(long, hide = true)]
     webp: bool,
     /// Lowest SSIMULACRA2 score a lossy candidate may have and still be recommended.
     #[arg(long, default_value_t = AnalysisOptions::default().min_score)]
@@ -69,7 +73,7 @@ impl AnalysisArgs {
             max_pixels: self.max_pixels,
             png_level: self.png_level,
             png_reductions: self.png_reductions,
-            webp: self.webp,
+            webp: !self.no_webp,
             min_score: self.min_score,
             max_alpha_error: self.max_alpha_error,
             android_min_sdk: self.android_min_sdk,
