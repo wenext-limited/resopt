@@ -12,7 +12,7 @@ Your files never leave your computer. Analysis never modifies your project.
 - **See results while analysis runs.** Completed files appear immediately, largest first. Stop at any time; finished work is cached, so the next run continues where you left off.
 - **Optimize PNG without changing a pixel.** Decoded samples (including color under transparent pixels) and metadata chunks are verified before a candidate is offered.
 - **Compare JPEG, HEIC and WebP candidates** at the encoder quality levels you choose (75, 85 and 95 by default), including same-format recompression of existing JPEG and WebP files. Lossless WebP candidates are verified sample-for-sample.
-- **Optimize SVGA animations losslessly.** Embedded images are recompressed; every other byte of the animation and every pixel is verified unchanged.
+- **Optimize and preview SVGA animations.** Embedded images are recompressed losslessly; every other byte of the animation and every pixel is verified unchanged. SVGA files are rendered, so you see a thumbnail and can play the animation frame by frame in the review page.
 - **Judge quality with evidence.** Side-by-side previews, a full-size comparison slider, SSIMULACRA2 perceptual scores, and RGB and Alpha error for every candidate.
 - **Decide on warnings yourself.** Candidates below the perceptual-score or Alpha thresholds are kept, clearly marked, and excluded from recommended totals. You can accept one after reviewing it; your approval is recorded. Corrupt files, changed dimensions, stale files and protected resources can never be approved through.
 - **Apply safely, one file or many.** Preview exactly which files change, confirm, and restore any time — even after restarting resopt. Batch apply takes an explicit policy, reports each file's outcome, can be stopped midway, and "Restore all" undoes everything. Files you edited after analysis are never overwritten.
@@ -128,7 +128,7 @@ A browser-only edition (static site, WebAssembly) optimizes individual PNG files
 - App icons, sliced (resizable) catalog images and animated images are inspected but never converted. Animated images are never flattened.
 - WebP is not offered for asset-catalog renditions.
 - Reference migration covers statically resolvable references. Names built at runtime, third-party decoders and references outside the scanned directory need your review; ambiguous references block the change instead of guessing.
-- SVGA 1.x (zip) files, and SVGA files containing audio or unknown fields, are reported as unsupported rather than rewritten.
+- SVGA 1.x (zip) files, and SVGA files containing audio or unknown fields, are reported as unsupported rather than rewritten (they are still previewed). SVGA playback draws bitmaps, shapes, clip paths and mattes; dynamic text/images set by app code at runtime and JPEG-encoded embedded images are not drawn.
 - SVG, PDF, audio, video, fonts and archives are inventoried but not optimized. No lossy audio/video transcoding is performed.
 - HEIC candidates cannot be displayed by most browsers; the comparison uses a PNG preview and links the file so you can open it in Preview or Safari.
 

@@ -402,6 +402,20 @@ fn web_analyzes_local_project_without_uploads_and_serves_review() {
             "{route}"
         );
     }
+    // Animation frames exist only for SVGA rows, by index, behind the cookie.
+    assert!(request(address, "GET", "/animation/0/0", "", "").starts_with("HTTP/1.1 403"));
+    for route in [
+        "/animation/0/0",
+        "/animation/999/0",
+        "/animation/0",
+        "/animation/a/b",
+        "/animation/0/0/../x",
+    ] {
+        assert!(
+            request(address, "GET", route, &cookie, "").starts_with("HTTP/1.1 404"),
+            "{route}"
+        );
+    }
     // Artifacts need the session cookie: knowing the port is not enough.
     assert!(request(address, "GET", &format!("/{artifact}"), "", "").starts_with("HTTP/1.1 403"));
     let stolen = format!(

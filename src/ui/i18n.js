@@ -51,6 +51,7 @@ const MESSAGES = {
     methodology2: 'Animated images are never flattened. Savings are source-file bytes, not compiled app size.', footerUnits: 'Sizes use binary units (KiB = 1,024 bytes); hover for exact bytes.', footerScope: 'Source savings only · not app download size',
     dup_identical: 'Identical files', dup_resized: 'Same picture at different sizes', dup_similar: 'Near-duplicate pictures', dupRedundant: '{0} files · {1} beyond the largest copy',
     dupHint: 'Found by comparing decoded pixels, not names. Scale variants of one asset (@2x/@3x, density folders) are not reported. Removing a copy means updating the code that uses it, so nothing is merged automatically.',
+    animInfo: '{0} × {1} · {2} fps · {3} frames', animPlay: 'Play', animPause: 'Pause', animFrame: 'Frame {0} of {1}', animStatic: 'Poster frame {0}. Open this report with resopt serve to play the animation.',
     android: 'Android', androidInfo: '{0}/{1} · name “{2}” · qualifiers {3}', notes: 'Notes', perf: 'Analysis took {0} s ({1} workers, {2} cache hits, {3} duplicates reused)',
     capabilityTitle: 'Available on this computer', tool_missing: '{0} not found — {1} Install: {2}',
     kind_image: 'Image', kind_vector: 'Vector', kind_video: 'Video', kind_audio: 'Audio', kind_animation: 'Animation', kind_font: 'Font', kind_archive: 'Archive', kind_localization: 'Localization', kind_data: 'Data', kind_unclassified: 'Other',
@@ -62,6 +63,7 @@ const MESSAGES = {
     issue_decoded_image_exceeds_max_pixels: 'Larger than the pixel limit (raise it with --max-pixels)', issue_dimensions_changed: 'Dimensions changed', issue_orientation_changed: 'Orientation changed', issue_no_smaller_candidate: 'No smaller candidate was produced', issue_failed_verification: 'This candidate failed verification and cannot be applied',
     issue_ffprobe_not_installed: 'Install ffmpeg to see codec, duration and bitrate for this file', mediaInfo: '{0} · {1} s · {2} kbit/s',
     issue_webp_candidates_disabled: 'WebP candidates were turned off for this run (--no-webp)',
+    issue_preview_unavailable: 'This animation could not be rendered for preview ({0}); optimization is verified on its bytes and is unaffected',
     issue_backend: 'Listed in the inventory; resopt has no optimizer for this type yet', issue_macos: 'Decoding this format needs Apple ImageIO (macOS)', issue_min_sdk: 'WebP here needs API {1}+, but minSdk is {0}', issue_metadata: 'Not carried into the new file: {0}',
   },
   'zh-CN': {
@@ -114,6 +116,7 @@ const MESSAGES = {
     methodology2: '动图不会被压成单帧。节省量指源文件字节数，不是编译后的 App 体积。', footerUnits: '体积采用二进制单位（1 KiB = 1,024 字节），悬停可查看精确字节数。', footerScope: '仅统计源文件收益 · 不等于 App 下载体积',
     dup_identical: '完全相同的文件', dup_resized: '同一张图片的不同尺寸', dup_similar: '近似重复的图片', dupRedundant: '{0} 个文件 · 除最大的一份外共 {1}',
     dupHint: '通过比较解码后的像素发现，与文件名无关。同一资源的倍率变体（@2x/@3x、密度目录）不会列出。删除副本需要同步修改引用它的代码，因此不会自动合并。',
+    animInfo: '{0} × {1} · {2} fps · {3} 帧', animPlay: '播放', animPause: '暂停', animFrame: '第 {0} / {1} 帧', animStatic: '封面为第 {0} 帧。使用 resopt serve 打开此报告即可播放动画。',
     android: 'Android', androidInfo: '{0}/{1} · 名称“{2}” · 限定符 {3}', notes: '说明', perf: '分析耗时 {0} 秒（{1} 个线程，缓存命中 {2}，复用重复文件 {3}）',
     capabilityTitle: '本机可用能力', tool_missing: '未找到 {0} — {1} 安装方式：{2}',
     kind_image: '图片', kind_vector: '矢量图', kind_video: '视频', kind_audio: '音频', kind_animation: '动效', kind_font: '字体', kind_archive: '压缩包', kind_localization: '本地化', kind_data: '数据文件', kind_unclassified: '其他',
@@ -125,6 +128,7 @@ const MESSAGES = {
     issue_decoded_image_exceeds_max_pixels: '超过像素上限（可用 --max-pixels 调整）', issue_dimensions_changed: '尺寸改变', issue_orientation_changed: '方向改变', issue_no_smaller_candidate: '没有生成更小的候选', issue_failed_verification: '该候选未通过校验，无法应用',
     issue_ffprobe_not_installed: '安装 ffmpeg 后可查看此文件的编码、时长与码率', mediaInfo: '{0} · {1} 秒 · {2} kbit/s',
     issue_webp_candidates_disabled: '本次运行已关闭 WebP 候选（--no-webp）',
+    issue_preview_unavailable: '无法渲染此动画的预览（{0}）；优化按字节校验，不受影响',
     issue_backend: '已纳入清单；resopt 暂无此类型的优化器', issue_macos: '解码此格式需要 Apple ImageIO（macOS）', issue_min_sdk: '此处使用 WebP 需要 API {1}+，但 minSdk 为 {0}', issue_metadata: '不会带入新文件：{0}',
   },
 };
@@ -155,6 +159,8 @@ function issueText(locale, reason) {
   if (text.endsWith('_decoding_requires_macos_imageio')) return translate(locale, 'issue_macos');
   const sdk = text.match(/^android_min_sdk_(\d+)_below_webp_requirement_(\d+)$/);
   if (sdk) return translate(locale, 'issue_min_sdk', [sdk[1], sdk[2]]);
+  const preview = text.match(/^preview_unavailable: (.+)$/);
+  if (preview) return translate(locale, 'issue_preview_unavailable', [preview[1]]);
   const metadata = text.match(/^metadata_not_carried_over: (.+)$/);
   if (metadata) return translate(locale, 'issue_metadata', [metadata[1]]);
   return text;

@@ -83,7 +83,7 @@ mod resources;
 mod scan_options;
 #[cfg(feature = "native")]
 pub use analysis::{
-    AnalysisControl, AnalysisOptions, AnalysisReport, ImageCandidate, Performance,
+    AnalysisControl, AnalysisOptions, AnalysisReport, AnimationInfo, ImageCandidate, Performance,
     ResourceAnalysis, analyze, analyze_with_progress,
 };
 pub use image_backend::{

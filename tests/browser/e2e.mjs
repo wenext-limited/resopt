@@ -95,6 +95,22 @@ try {
     await click('#compare-close');
   });
 
+  await step('SVGA rows show a rendered poster and play frame by frame', async () => {
+    await click('[data-mode="all"]');
+    await browser.evaluate(`(() => { const s = document.getElementById('search'); s.value = '.svga'; s.dispatchEvent(new Event('input')); })()`);
+    await browser.waitFor(`document.querySelector('.resource-row .thumb img')?.naturalWidth > 0`);
+    await click('.resource-row');
+    await browser.waitFor(`document.querySelector('.player .canvas img')?.naturalWidth > 0`);
+    assert.match(await text('.facts'), /120 × 96 · 12 fps · 4 frames/);
+    const before = await browser.evaluate(`document.querySelector('.player .canvas img').src`);
+    await click('.player-controls button');
+    await browser.waitFor(`document.querySelector('.player .canvas img').src !== ${JSON.stringify(before)} && /animation\\/\\d+\\/\\d+/.test(document.querySelector('.player .canvas img').src)`);
+    await browser.waitFor(`document.querySelector('.player .canvas img').naturalWidth > 0`);
+    await click('.player-controls button');
+    await browser.screenshot(join(shots, 'svga-player.png'));
+    await browser.evaluate(`(() => { const s = document.getElementById('search'); s.value = ''; s.dispatchEvent(new Event('input')); })()`);
+  });
+
   await step('warning candidates need an explicit, separately worded confirmation', async () => {
     await click('[data-mode="warnings"]');
     assert.ok(await number('#mode-warnings') > 0, 'fixture should yield warnings at --min-score 90');

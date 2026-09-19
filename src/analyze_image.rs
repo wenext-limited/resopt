@@ -11,6 +11,9 @@ use crate::{
 use anyhow::{Result, ensure};
 use std::path::{Path, PathBuf};
 
+/// Longest side of thumbnails written into the report.
+const PREVIEW_SIDE: u32 = 256;
+
 pub(crate) struct Context<'a> {
     pub root: &'a Path,
     pub out: &'a Path,
@@ -142,7 +145,9 @@ pub(crate) fn analyze(
     digest: &str,
 ) -> ResourceAnalysis {
     if resource.format == "svga" {
-        return crate::svga::analyze(context, resource, index, original, digest);
+        let mut row = crate::svga::analyze(context, resource, index, original, digest);
+        attach_animation_preview(context, &mut row, index, original);
+        return row;
     }
     let mut result = ResourceAnalysis::new(resource, "inspected");
     result.sha256 = Some(digest.to_string());
@@ -153,6 +158,43 @@ pub(crate) fn analyze(
         result.smallest_candidate = None;
     }
     result
+}
+
+/// Poster thumbnail and timing facts for an animation. Rendering problems
+/// never fail the row: optimization is verified on bytes, not on this picture.
+fn attach_animation_preview(
+    context: &Context<'_>,
+    row: &mut ResourceAnalysis,
+    index: usize,
+    original: &[u8],
+) {
+    if context.control.is_cancelled() || row.status == "not_analyzed" {
+        return;
+    }
+    let rendered = context.timings.time(Phase::Preview, || -> Result<_> {
+        let renderer = crate::svga_render::Renderer::new(original)?;
+        let poster = renderer.poster_frame();
+        let frame = renderer.render(poster, PREVIEW_SIDE)?;
+        let (width, height) = renderer.output_size(u32::MAX);
+        let info = crate::analysis::AnimationInfo {
+            width,
+            height,
+            fps: renderer.fps(),
+            frames: renderer.frame_count(),
+            poster_frame: poster,
+        };
+        Ok((crate::svga_render::encode_png(&frame)?, info))
+    });
+    match rendered {
+        Ok((png, info)) => {
+            let preview = PathBuf::from(format!("previews/{index}-original.png"));
+            if write_artifact(&context.out.join(&preview), &png).is_ok() {
+                row.original_preview = Some(preview);
+            }
+            row.animation = Some(info);
+        }
+        Err(error) => row.issues.push(format!("preview_unavailable: {error:#}")),
+    }
 }
 
 fn analyze_into(

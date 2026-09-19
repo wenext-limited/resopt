@@ -100,6 +100,7 @@ fn fixture(format: &str, catalog: bool) -> (tempfile::TempDir, tempfile::TempDir
             original_artifact: None,
             fingerprint: None,
             media: None,
+            animation: None,
         }],
         status_counts: BTreeMap::new(),
         potential_source_bytes_saved: 0,
