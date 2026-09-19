@@ -19,7 +19,7 @@ Your files never leave your computer. Analysis never modifies your project.
 - **Apply safely, one file or many.** Preview exactly which files change, confirm, and restore any time — even after restarting resopt. Batch apply takes an explicit policy, reports each file's outcome, can be stopped midway, and "Restore all" undoes everything. Files you edited after analysis are never overwritten.
 - **Keep references working.** Asset-catalog `Contents.json` entries and statically resolvable references in source, project and web files are migrated together with a format change, and restored together.
 - **Find duplicate images.** Identical files, the same picture saved at different sizes, and near-duplicates are grouped by comparing decoded pixels. Intended variants (`@2x`/`@3x`, Android density folders) are not reported.
-- **Inventory everything else.** Audio, video, fonts, archives, SVG, PDF and data files are listed with an explicit "no optimizer" status. With `ffprobe` installed, audio and video show codec, duration and bitrate.
+- **Inventory everything else.** Audio, video, fonts, archives, SVG, PDF, Lottie animations and other resource files are listed with an explicit "no optimizer" status. Source code and JSON metadata (such as `Contents.json`) are left out. With `ffprobe` installed, audio and video show codec, duration and bitrate.
 - **Use it in scripts and CI.** JSON output, a self-contained HTML report, and command-line batch apply/restore.
 
 ## Install

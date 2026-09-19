@@ -1,18 +1,18 @@
 # Changelog
 
-## Unreleased
+## 0.7.0 · 2026-09-19
 
 ### Added
 - **Comparison modes.** Besides 2-up, the inspector and the full-size dialog can now compare a candidate by **swipe** (a split you drag across the picture), **onion skin** (candidate opacity over the original) and **difference** (a per-pixel difference, amplifiable ×1–×64, with the share of differing pixels and the largest difference). Colour hidden under full transparency does not count as a difference; alpha changes do. The chosen mode is remembered.
 - **Near-lossless HEIC** (macOS, on by default, `--no-near-lossless-heic` to skip): HEIC is also tried at the encoder's highest quality, 100, and labelled "near-lossless". It is still a lossy candidate, scored and approved like the others — Apple's encoder has no lossless mode. On real artwork it saved a median 23% where it beat the source, at a median SSIMULACRA2 of 94.
 - **Lossy PNG candidates** (on by default, `--no-lossy-png` to skip): PNG sources are also reduced to a 256/128/64-colour palette at qualities 95/85/75 by a built-in, deterministic quantizer (median cut with k-means refinement in an alpha-weighted colour space; no dithering). The file stays a PNG, so names, references, asset catalogs and Android resources are unaffected, and it works on every platform. They are judged like any lossy candidate (perceptual score, Alpha error, explicit approval) and never applied by the default lossless batch policy. Nine-patch, launcher-icon and `res/raw` files are never quantized. On large translucent artwork, expect them to appear as Alpha warnings: a 256-entry palette cannot keep every alpha level within the default 1/255 tolerance.
+- **Multi-select and scoped batch actions.** Shift-click selects a range and Option/Alt-click toggles resources; with several selected, **Batch apply** and the new **Restore selected** act on that selection only, through the same policy → plan → confirm flow.
+- **macOS app (build from source).** `macos/build-app.sh` builds a small SwiftUI shell that picks a project folder, runs the bundled `resopt web` and shows its loopback page; reports are kept under Application Support so changes stay restorable. Not part of the release downloads yet (distribution needs a Developer ID signature and notarization).
 - **SVGA previews and playback.** SVGA files now render: every SVGA row gets a poster thumbnail plus its canvas size, frame rate and frame count, and a live session plays the animation frame by frame with a scrubber. Rendering follows the reference players (bitmap sprites, transforms, clip paths, matte layers, vector shapes and `keep` frames). A file that cannot be rendered is still optimized; the row says why there is no picture.
 
 ### Changed
 - SVGA optimization now runs on the published [`svga`](https://crates.io/crates/svga) crate, extracted from resopt's own implementation. Results on real files are byte-for-byte unchanged. Embedded images are edited by position (svga 0.1.1), so an image stored under a key that is not valid UTF-8 is optimized too.
 - WebP candidates are compared by default for loose files and Android resources; pass `--no-webp` to skip them. `--webp` is still accepted and has no effect.
-
-### Changed
 - **JSON files are no longer listed as resources.** Catalog `Contents.json`, configuration and other JSON data buried real assets under thousands of rows. A Lottie animation (JSON with Lottie's version, frame-rate and frame-range keys up front) is still listed, as an animation.
 - **Faster analysis.** Lossy qualities are tried in ascending order, and once one overshoots the original by a safe margin the higher — and most expensive — qualities of that format are not encoded. The report says so on those candidates. The margins (5%, and 25% before skipping HEIC quality 100) come from 10,634 real encodes, where size was non-monotonic five times and never by more than 13%; with them, a 2,730-resource project produced exactly the same usable candidates in 129 s instead of 206 s. Palette sizes for lossy PNG are exempt, because PNG size is not monotonic in palette size. The PNG quantizer decodes and builds its histogram once for all palette sizes. Per-format encode timings are reported by `--timings`.
 
