@@ -286,17 +286,34 @@ pub(crate) fn run(
     status.lock().unwrap_or_else(|e| e.into_inner()).running = false;
 }
 
-/// Restore every applied or partially applied operation. Operations sharing a
-/// file (one Contents.json, one reference file) must be undone newest-first;
-/// repeated passes find that order without trusting recorded timestamps.
-pub(crate) fn restore_all(review: &Review, cancel: &AtomicBool) -> BatchStatus {
+/// Restore applied or partially applied operations, optionally limited to a
+/// caller-selected set of resource indexes. Operations sharing a file (one
+/// Contents.json, one reference file) must be undone newest-first; repeated
+/// passes find that order without trusting recorded timestamps.
+pub(crate) fn restore_many(
+    review: &Review,
+    resources: Option<&[usize]>,
+    cancel: &AtomicBool,
+) -> BatchStatus {
+    let selected = resources.map(|indexes| {
+        indexes
+            .iter()
+            .copied()
+            .collect::<std::collections::BTreeSet<_>>()
+    });
     let mut pending: Vec<usize> = review
         .states()
         .as_object()
         .into_iter()
         .flatten()
-        .filter(|(_, state)| state["state"] != "original")
-        .filter_map(|(index, _)| index.parse().ok())
+        .filter_map(|(index, state)| {
+            let index = index.parse().ok()?;
+            (state["state"] != "original"
+                && selected
+                    .as_ref()
+                    .is_none_or(|indexes| indexes.contains(&index)))
+            .then_some(index)
+        })
         .collect();
     pending.sort_unstable();
     let mut status = BatchStatus {
@@ -348,6 +365,10 @@ pub(crate) fn restore_all(review: &Review, cancel: &AtomicBool) -> BatchStatus {
         });
     }
     status
+}
+
+pub(crate) fn restore_all(review: &Review, cancel: &AtomicBool) -> BatchStatus {
+    restore_many(review, None, cancel)
 }
 
 /// Plan a batch for the report in `directory` without changing anything.

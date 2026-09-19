@@ -304,7 +304,12 @@ fn web_analyzes_local_project_without_uploads_and_serves_review() {
     let rebinding = request_with_host("attacker.example", address, "GET", &entry, "", "");
     assert!(rebinding.starts_with("HTTP/1.1 403"), "{rebinding}");
     let cross_site = post.replace(&origin, "https://attacker.example");
-    for route in ["/api/cancel", "/api/batch/apply", "/api/restore-all"] {
+    for route in [
+        "/api/cancel",
+        "/api/batch/apply",
+        "/api/batch/restore",
+        "/api/restore-all",
+    ] {
         let response = request(address, "POST", route, &cross_site, "{}");
         assert!(response.starts_with("HTTP/1.1 403"), "{route}: {response}");
         let no_token = request(
@@ -464,6 +469,40 @@ fn web_analyzes_local_project_without_uploads_and_serves_review() {
     assert_eq!(status["applied"], 1, "{status}");
     assert_eq!(status["outcomes"][0]["outcome"], "applied");
     assert!(fs::metadata(root.join("image.png")).unwrap().len() < original.len() as u64);
+
+    // A restore batch is constrained to explicit report indexes.
+    let invalid = request(
+        address,
+        "POST",
+        "/api/batch/restore",
+        &post,
+        r#"{"resources":[999]}"#,
+    );
+    assert!(invalid.starts_with("HTTP/1.1 409"), "{invalid}");
+    let restoring = request(
+        address,
+        "POST",
+        "/api/batch/restore",
+        &post,
+        r#"{"resources":[0]}"#,
+    );
+    assert!(restoring.starts_with("HTTP/1.1 200"), "{restoring}");
+    let status = wait_for_batch();
+    assert_eq!(status["applied"], 1, "{status}");
+    assert_eq!(fs::read(root.join("image.png")).unwrap(), original);
+
+    // The existing restore-all path remains available after a later batch.
+    let plan = body_of(&request(
+        address,
+        "POST",
+        "/api/batch/preview",
+        &post,
+        policy,
+    ));
+    let confirmed = json!({"policy": {}, "token": plan["token"]}).to_string();
+    let started = request(address, "POST", "/api/batch/apply", &post, &confirmed);
+    assert!(started.starts_with("HTTP/1.1 200"), "{started}");
+    assert_eq!(wait_for_batch()["applied"], 1);
     let restoring = request(address, "POST", "/api/restore-all", &post, "{}");
     assert!(restoring.starts_with("HTTP/1.1 200"), "{restoring}");
     let status = wait_for_batch();

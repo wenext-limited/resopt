@@ -37,7 +37,7 @@ try {
     await browser.waitFor(`!document.getElementById('batch-open').hidden`, 300000);
     assert.ok(await number('#stat-opportunities') > 0);
     assert.match(await text('#stat-savings'), /(B|KiB|MiB)$/);
-    assert.match(await browser.evaluate(`document.getElementById('stat-savings').title`), /bytes/);
+    assert.match(await browser.evaluate(`document.getElementById('stat-savings').title`), /(bytes|字节)/);
   });
   await browser.screenshot(join(shots, 'desktop-light-or-system.png'));
 
@@ -66,6 +66,31 @@ try {
     await browser.evaluate(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))`);
     assert.notEqual(await text('.detail-heading h1'), first);
     assert.equal(await browser.evaluate(`document.querySelectorAll('[aria-selected="true"]').length`), 1);
+  });
+
+  await step('Shift and Option select a batch scope and update the inspector', async () => {
+    assert.ok(await browser.evaluate(`document.querySelectorAll('.resource-row').length >= 3`));
+    await browser.evaluate(`(() => { const rows = document.querySelectorAll('.resource-row'); rows[0].dispatchEvent(new MouseEvent('click', { bubbles: true })); rows[2].dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true })); })()`);
+    assert.equal(await browser.evaluate(`document.querySelectorAll('.resource-row[aria-selected="true"]').length`), 3);
+    assert.ok(await browser.evaluate(`!!document.querySelector('.multi-selection')`));
+    await browser.evaluate(`document.querySelectorAll('.resource-row')[1].dispatchEvent(new MouseEvent('click', { bubbles: true, altKey: true }))`);
+    assert.equal(await browser.evaluate(`document.querySelectorAll('.resource-row[aria-selected="true"]').length`), 2);
+    await browser.evaluate(`(() => { const rows = document.querySelectorAll('.resource-row'); rows[3].dispatchEvent(new MouseEvent('click', { bubbles: true, altKey: true })); rows[4].dispatchEvent(new MouseEvent('click', { bubbles: true, altKey: true })); })()`);
+    assert.equal(await browser.evaluate(`document.querySelectorAll('.resource-row[aria-selected="true"]').length`), 4);
+    assert.match(await text('#batch-open'), /(selected|已选)/i);
+    await click('#batch-open');
+    assert.match(await text('#batch-scope-label'), /(selected|已选)/i);
+    await click('#batch-preview');
+    await browser.waitFor(`!document.getElementById('batch-plan-view').hidden`);
+    const selectedSummary = await text('#batch-summary');
+    assert.match(selectedSummary, /(4 selected|已选 4 个)/);
+    assert.match(selectedSummary, /(excluded|已排除)/);
+    const included = await browser.evaluate(`document.querySelectorAll('#batch-items li').length`);
+    const excluded = await browser.evaluate(`document.querySelectorAll('#batch-excluded-items li').length`);
+    assert.equal(included + excluded, 4);
+    if (excluded) assert.ok(await text('#batch-excluded-items'));
+    await click('#batch-close');
+    await browser.evaluate(`document.querySelector('.resource-row').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
   });
 
   await step('accessibility basics: every control has a name, images have alt', async () => {
@@ -138,7 +163,7 @@ try {
     assert.deepEqual(snapshot(project), before, 'restore is byte-exact');
   });
 
-  await step('batch: policy -> preview -> confirm -> outcomes, then restore all', async () => {
+  await step('batch apply, restore selected, then restore all', async () => {
     await click('#batch-open');
     assert.equal(await browser.evaluate(`document.getElementById('batch-alpha').disabled`), true, 'warnings need lossy enabled');
     await click('#batch-preview');
@@ -151,13 +176,31 @@ try {
     assert.match(await text('#batch-progress-text'), /Applied \d+ · failed 0/);
     await browser.screenshot(join(shots, 'batch-done.png'));
     await click('#batch-done');
-    assert.ok(await number('#mode-applied') > 1);
+    const appliedBefore = await number('#mode-applied');
+    assert.ok(appliedBefore > 1);
     assert.notEqual(await text('#stat-applied'), '0 B');
-    await click('#restore-all-open');
+
+    await click('[data-mode="applied"]');
+    await browser.evaluate(`(() => { const rows = document.querySelectorAll('.resource-row'); rows[0].click(); rows[1].dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true })); })()`);
+    assert.equal(await browser.evaluate(`document.querySelectorAll('.resource-row[aria-selected="true"]').length`), 2);
+    assert.equal(await browser.evaluate(`document.getElementById('restore-selected-open').hidden`), false);
+    assert.match(await text('#restore-selected-open'), /2/);
+    await click('#restore-selected-open');
+    assert.equal(await browser.evaluate(`document.querySelectorAll('#batch-items li').length`), 2);
     await click('#batch-confirm');
     await browser.waitFor(`!document.getElementById('batch-done').hidden`, 120000);
+    assert.match(await text('#batch-progress-text'), /Restored 2 · not restored 0/);
     await click('#batch-done');
+    assert.equal(await number('#mode-applied'), appliedBefore - 2);
+
+    if (appliedBefore > 2) {
+      await click('#restore-all-open');
+      await click('#batch-confirm');
+      await browser.waitFor(`!document.getElementById('batch-done').hidden`, 120000);
+      await click('#batch-done');
+    }
     assert.deepEqual(snapshot(project), before, 'restore-all is byte-exact');
+    await click('[data-mode="all"]');
   });
 
   await step('responsive layout at phone width has no horizontal overflow', async () => {

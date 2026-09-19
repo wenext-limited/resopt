@@ -42,6 +42,23 @@ The package is named **resopt-cli**; the command is **resopt**. Building from so
 
 ## Start with your project
 
+### macOS app (build from source)
+
+On a Mac with Xcode and Rust installed, run `macos/build-app.sh` to create
+`dist/Resopt.app`, then open the app and choose a project directory. The native
+SwiftUI shell bundles the same Rust engine and local review UI as the CLI. It
+keeps reports and restore backups under
+`~/Library/Application Support/resopt/Reports`.
+
+Choose 2, 4, or 8 parallel image tasks before starting a scan. In the results,
+Shift-click selects a range and Option/Alt-click toggles individual resources;
+when several resources are selected, batch apply and restore selected are scoped
+to that selection.
+Applied images use a green background and an aligned **Applied** label. The
+local build is ad-hoc signed for testing and is not notarized for distribution.
+
+### Command line
+
 ```sh
 resopt web /path/to/project
 ```
