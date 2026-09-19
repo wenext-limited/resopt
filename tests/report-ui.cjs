@@ -37,6 +37,45 @@ test('batch policy prefers an explicit multi-selection over the current view', (
   assert.deepEqual([...batchPolicy().resources], [0, 2]);
 });
 
+test('opening a batch resets to the safe lossless same-format policy', () => {
+  const source = ui('batch.js');
+  const start = source.indexOf('function resetBatchPolicy');
+  const end = source.indexOf('function candidatePolicyReasons', start);
+  const controls = { 'batch-lossless': { checked: false }, 'batch-lossy': { checked: true }, 'batch-cross': { checked: true }, 'batch-alpha': { checked: true }, 'batch-quality': { checked: true }, 'batch-min-score': { value: '60' } };
+  const { resetBatchPolicy } = vm.runInNewContext(`${source.slice(start, end)}; ({resetBatchPolicy})`, { $: id => controls[id] });
+  resetBatchPolicy();
+  assert.equal(controls['batch-lossless'].checked, true);
+  for (const id of ['batch-lossy', 'batch-cross', 'batch-alpha', 'batch-quality']) assert.equal(controls[id].checked, false, id);
+  assert.equal(controls['batch-min-score'].value, '');
+});
+
+test('batch exclusions explain every broader policy required by a candidate', () => {
+  const source = ui('batch.js');
+  const start = source.indexOf('function candidatePolicyReasons');
+  const end = source.indexOf('function selectedBatchExclusions', start);
+  const context = { warningKind: () => null, warningKinds: () => [] };
+  const { candidatePolicyReasons } = vm.runInNewContext(`${source.slice(start, end)}; ({candidatePolicyReasons})`, context);
+  const resource = { resource: { format: 'jpg' } };
+  const candidate = { format: 'heic', lossy: true, valid: true, artifact: 'candidates/image.heic' };
+  const policy = { lossless: true, lossy: false, cross_format: false, min_score: null, accept_warnings: [] };
+  assert.deepEqual([...candidatePolicyReasons(resource, candidate, policy)], ['batchExcludedLossy', 'batchExcludedCross']);
+});
+
+test('selected restore scope includes only selected non-original operations', () => {
+  const source = ui('app.js');
+  const start = source.indexOf('function selectedAppliedResources');
+  const end = source.indexOf('function appliedSavings', start);
+  const a = {}, b = {}, c = {}, records = [a, b, c];
+  const states = new Map([[a, 'applied'], [b, 'original'], [c, 'conflict']]);
+  const context = {
+    state: { selectedRecords: new Set(records) },
+    isApplied: record => states.get(record) !== 'original',
+    indexOf: record => records.indexOf(record),
+  };
+  const { selectedAppliedResources } = vm.runInNewContext(`${source.slice(start, end)}; ({selectedAppliedResources})`, context);
+  assert.deepEqual([...selectedAppliedResources()], [0, 2]);
+});
+
 test('operation badges distinguish successful apply from warning states', () => {
   const source = ui('app.js');
   const start = source.indexOf('function operationBadge');

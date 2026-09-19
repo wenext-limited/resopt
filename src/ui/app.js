@@ -46,6 +46,9 @@ function operationBadge(r) {
   const status = operation(r)?.state;
   return status === 'partial' ? t('operationPartial') : status === 'conflict' ? t('operationConflict') : '';
 }
+function selectedAppliedResources() {
+  return [...state.selectedRecords].filter(isApplied).map(indexOf);
+}
 function appliedSavings(r) {
   const s = operation(r);
   return s?.state === 'applied' ? (r.candidates?.[s.candidate]?.savings_bytes || 0) : 0;
@@ -146,8 +149,11 @@ function renderSummary() {
     select.value = formats.includes(current) ? current : 'all';
   }
   const live = !!state.token && state.phase === 'ready';
+  const selectedApplied = selectedAppliedResources().length;
   $('batch-open').hidden = !live; $('restore-all-open').hidden = !live;
+  $('restore-selected-open').hidden = !live || state.selectedRecords.size <= 1 || !selectedApplied;
   $('batch-open').textContent = state.selectedRecords.size > 1 ? t('batchSelected', count(state.selectedRecords.size)) : t('batch');
+  $('restore-selected-open').textContent = t('restoreSelected', count(selectedApplied));
   $('batch-open').disabled = !opportunities.length && !modes.warnings; $('restore-all-open').disabled = !modes.applied;
 }
 
@@ -247,9 +253,13 @@ function renderList() {
   }
   if (focused !== undefined) list.querySelector(`[data-index="${focused}"]`)?.focus();
   const total = state.filtered.length;
-  $('range').textContent = `${total ? t('range', count(start + 1), count(Math.min(start + PAGE_SIZE, total)), count(total)) : t('none')} · ${t('selectedCount', count(state.selectedRecords.size))}`;
+  renderListRange();
   $('page-number').textContent = `${total ? state.page + 1 : 0} / ${Math.ceil(total / PAGE_SIZE)}`;
   $('previous').disabled = state.page === 0; $('next').disabled = start + PAGE_SIZE >= total;
+}
+function renderListRange() {
+  const total = state.filtered.length, start = state.page * PAGE_SIZE;
+  $('range').textContent = `${total ? t('range', count(start + 1), count(Math.min(start + PAGE_SIZE, total)), count(total)) : t('none')} · ${t('selectedCount', count(state.selectedRecords.size))}`;
 }
 function operationStatus(kind, symbol, label) {
   const status = el('span', `operation-status ${kind}`), icon = el('span', 'operation-icon', symbol);
@@ -265,6 +275,7 @@ function selectRecord(r, event = {}) {
     row.setAttribute?.('aria-selected', String(state.selectedRecords.has(item)));
     row.dataset.active = String(item === state.selected);
   }
+  renderListRange();
   renderSummary();
   renderDetail();
 }

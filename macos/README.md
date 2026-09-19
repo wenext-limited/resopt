@@ -29,8 +29,8 @@ defaults to four tasks; smaller Macs default to two. Changes take effect on
 the next scan. More tasks can shorten analysis but use more memory.
 
 In the embedded report, Shift-click selects a range and Option/Alt-click toggles
-individual resources. When multiple resources are selected, **Batch apply** is
-limited to that selection. Choose the lossless, lossy, warning, and format-change
-policy, review the generated plan, then confirm once. Every applied file remains
-an individually restorable operation, and **Restore all** resolves shared-file
-dependencies in the correct order.
+individual resources. When multiple resources are selected, **Batch apply** and
+**Restore selected** are limited to that selection. Choose the lossless, lossy,
+warning, and format-change policy, review the generated plan, then confirm once.
+Every applied file remains an individually restorable operation, and **Restore
+all** resolves shared-file dependencies in the correct order.

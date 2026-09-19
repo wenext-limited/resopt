@@ -51,7 +51,8 @@ keeps reports and restore backups under
 
 Choose 2, 4, or 8 parallel image tasks before starting a scan. In the results,
 Shift-click selects a range and Option/Alt-click toggles individual resources;
-when several resources are selected, batch apply is scoped to that selection.
+when several resources are selected, batch apply and restore selected are scoped
+to that selection.
 Applied images use a green background and an aligned **Applied** label. The
 local build is ad-hoc signed for testing and is not notarized for distribution.
 

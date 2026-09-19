@@ -208,6 +208,7 @@ fn toolbar() -> Markup {
                 option value="score" data-i18n="sortScore" {}
             }
             button.primary type="button" id="batch-open" hidden data-i18n="batch" {}
+            button type="button" id="restore-selected-open" hidden data-i18n="restoreSelected" {}
             button type="button" id="restore-all-open" hidden data-i18n="restoreAll" {}
         }
     }
@@ -258,6 +259,8 @@ fn dialogs() -> Markup {
             div id="batch-plan-view" hidden {
                 p.summary-text id="batch-summary" {}
                 ul.batch-list id="batch-items" {}
+                h3 id="batch-excluded-title" hidden {}
+                ul.batch-list.batch-excluded id="batch-excluded-items" hidden {}
                 div.dialog-actions {
                     button type="button" id="batch-back" data-i18n="cancelButton" {}
                     button.primary type="button" id="batch-confirm" {}

@@ -72,6 +72,17 @@ struct BatchRequest {
     token: Option<String>,
 }
 
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct RestoreRequest {
+    resources: Vec<usize>,
+}
+
+enum BatchJob {
+    Apply(BatchPlan),
+    Restore(Option<Vec<usize>>),
+}
+
 /// Analysis progress shared between the worker thread and HTTP handlers.
 #[derive(Default)]
 pub(crate) struct Live {
@@ -441,19 +452,37 @@ fn api_post(app: &Arc<App>, route: &str, body: &[u8]) -> Result<Option<serde_jso
                 request.token.as_deref() == Some(plan.token.as_str()),
                 "the project or policy changed after the preview; review the batch again"
             );
-            start_batch(app, Some(plan))?;
+            start_batch(app, BatchJob::Apply(plan))?;
+            serde_json::json!({"ok": true})
+        }
+        "/api/batch/restore" => {
+            let mut request: RestoreRequest = serde_json::from_slice(body)?;
+            ensure!(
+                !request.resources.is_empty(),
+                "select at least one resource to restore"
+            );
+            request.resources.sort_unstable();
+            request.resources.dedup();
+            ensure!(
+                request
+                    .resources
+                    .iter()
+                    .all(|&index| index < review.report.resources.len()),
+                "invalid resource index"
+            );
+            start_batch(app, BatchJob::Restore(Some(request.resources)))?;
             serde_json::json!({"ok": true})
         }
         "/api/restore-all" => {
-            start_batch(app, None)?;
+            start_batch(app, BatchJob::Restore(None))?;
             serde_json::json!({"ok": true})
         }
         _ => return Ok(None),
     }))
 }
 
-/// Run a batch (or restore-all when `plan` is `None`) on a background thread.
-fn start_batch(app: &Arc<App>, plan: Option<BatchPlan>) -> Result<()> {
+/// Run an apply or restore batch on a background thread.
+fn start_batch(app: &Arc<App>, job: BatchJob) -> Result<()> {
     ensure!(
         !app.batch_running.swap(true, Ordering::SeqCst),
         "another batch is already running"
@@ -463,16 +492,23 @@ fn start_batch(app: &Arc<App>, plan: Option<BatchPlan>) -> Result<()> {
     // accepted never reads the outcome of the previous batch.
     *app.batch_status.lock().unwrap_or_else(|e| e.into_inner()) = BatchStatus {
         running: true,
-        total: plan.as_ref().map_or(0, |p| p.items.len()),
+        total: match &job {
+            BatchJob::Apply(plan) => plan.items.len(),
+            BatchJob::Restore(Some(resources)) => resources.len(),
+            BatchJob::Restore(None) => 0,
+        },
         ..Default::default()
     };
     let app = app.clone();
     std::thread::spawn(move || {
         if let Some(review) = app.review.get() {
-            match plan {
-                Some(plan) => batch::run(review, &plan, &app.batch_status, &app.batch_cancel),
-                None => {
-                    let status = batch::restore_all(review, &app.batch_cancel);
+            match job {
+                BatchJob::Apply(plan) => {
+                    batch::run(review, &plan, &app.batch_status, &app.batch_cancel)
+                }
+                BatchJob::Restore(resources) => {
+                    let status =
+                        batch::restore_many(review, resources.as_deref(), &app.batch_cancel);
                     *app.batch_status.lock().unwrap_or_else(|e| e.into_inner()) = status;
                 }
             }
