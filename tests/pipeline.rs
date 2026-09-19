@@ -453,8 +453,14 @@ fn lossy_png_candidates_are_opt_in_at_apply_time_and_restore_exactly() {
         .collect();
     assert_eq!(lossy.len(), 2, "{:?}", row.candidates);
     for candidate in &lossy {
+        // Whether it also passes the score threshold depends on the image; a
+        // synthetic gradient may not, which is what warnings are for.
+        assert!(candidate.artifact.is_some(), "{candidate:?}");
         assert!(
-            candidate.artifact.is_some() && candidate.valid,
+            candidate
+                .warnings
+                .iter()
+                .all(|w| w == "quality_below_policy"),
             "{candidate:?}"
         );
         assert!(candidate.difference.as_ref().unwrap().ssimulacra2.is_some());
@@ -475,6 +481,7 @@ fn lossy_png_candidates_are_opt_in_at_apply_time_and_restore_exactly() {
         lossless: false,
         lossy: true,
         formats: vec!["png".into()],
+        accept_warnings: vec!["quality_below_policy".into()],
         ..Default::default()
     };
     let plan = plan_report(&out, &policy).unwrap();

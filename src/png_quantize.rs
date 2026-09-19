@@ -4,8 +4,7 @@
 //! and keeps the file's format, name and references. It is a *lossy* candidate:
 //! it is scored, thresholded and approved exactly like JPEG, HEIC and WebP.
 use anyhow::{Context, Result, ensure};
-use exoquant::{Color, convert_to_indexed, ditherer, optimizer};
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 /// Chunks that describe how samples are interpreted or displayed. They are
 /// carried over unchanged so the quantized file renders in the same colour
@@ -43,35 +42,188 @@ fn carried_chunks(png: &[u8]) -> Vec<([u8; 4], Vec<u8>)> {
     found
 }
 
-/// Squared distance between a pixel and a palette entry. Alpha differences
-/// are weighted up, and colour differences matter less the more transparent
-/// the pixel is, so translucent edges keep their shape.
-fn distance(pixel: [u8; 4], entry: [u8; 4]) -> f32 {
-    let alpha = f32::from(pixel[3]) - f32::from(entry[3]);
-    let visible = (f32::from(pixel[3].max(entry[3])) / 255.0).max(1.0 / 255.0);
-    let colour: f32 = (0..3)
-        .map(|c| (f32::from(pixel[c]) - f32::from(entry[c])).powi(2))
-        .sum();
-    alpha * alpha * 4.0 + colour * visible * visible
+/// Alpha counts more than colour: a wrong alpha level is visible on any backdrop.
+const ALPHA_WEIGHT: f32 = 2.0;
+/// Above this many distinct colours the histogram is coarsened before
+/// clustering, which bounds time and memory on photographic images.
+const MAX_HISTOGRAM: usize = 60_000;
+const REFINEMENTS: usize = 6;
+
+type Point = [f32; 4];
+
+/// Colour in the space distances are measured in: colour scaled by opacity, so
+/// the hue of nearly transparent pixels hardly matters, plus weighted alpha.
+fn point(pixel: [u8; 4]) -> Point {
+    let opacity = f32::from(pixel[3]) / 255.0;
+    [
+        f32::from(pixel[0]) * opacity,
+        f32::from(pixel[1]) * opacity,
+        f32::from(pixel[2]) * opacity,
+        f32::from(pixel[3]) * ALPHA_WEIGHT,
+    ]
+}
+
+fn colour(point: Point) -> [u8; 4] {
+    let alpha = (point[3] / ALPHA_WEIGHT).clamp(0.0, 255.0);
+    let opacity = alpha / 255.0;
+    let channel = |value: f32| {
+        if opacity > 0.0 {
+            (value / opacity).round().clamp(0.0, 255.0) as u8
+        } else {
+            0
+        }
+    };
+    [
+        channel(point[0]),
+        channel(point[1]),
+        channel(point[2]),
+        alpha.round() as u8,
+    ]
+}
+
+fn squared_distance(a: Point, b: Point) -> f32 {
+    (0..4).map(|i| (a[i] - b[i]) * (a[i] - b[i])).sum()
+}
+
+/// Distinct colours with their pixel counts, in a fixed order. A `BTreeMap`
+/// rather than a `HashMap`: iteration order feeds the clustering, and results
+/// must be identical from run to run.
+fn histogram(pixels: &[[u8; 4]]) -> Vec<(Point, f32)> {
+    let mut counts: BTreeMap<[u8; 4], u32> = BTreeMap::new();
+    for pixel in pixels {
+        *counts.entry(*pixel).or_insert(0) += 1;
+    }
+    let mut shift = 0;
+    while counts.len() > MAX_HISTOGRAM && shift < 4 {
+        shift += 1;
+        let mut coarse: BTreeMap<[u8; 4], u32> = BTreeMap::new();
+        for (pixel, count) in &counts {
+            // Alpha keeps full precision; only colour is bucketed.
+            let key = [
+                pixel[0] >> shift << shift,
+                pixel[1] >> shift << shift,
+                pixel[2] >> shift << shift,
+                pixel[3],
+            ];
+            *coarse.entry(key).or_insert(0) += count;
+        }
+        counts = coarse;
+    }
+    counts
+        .into_iter()
+        .map(|(pixel, count)| (point(pixel), count as f32))
+        .collect()
+}
+
+struct Cluster {
+    members: Vec<usize>,
+    mean: Point,
+    /// Summed squared error along the widest axis, and that axis.
+    spread: (f32, usize),
+}
+
+fn cluster(members: Vec<usize>, entries: &[(Point, f32)]) -> Cluster {
+    let mut total = 0.0_f32;
+    let mut mean = [0.0_f32; 4];
+    for &m in &members {
+        let (p, weight) = entries[m];
+        total += weight;
+        for axis in 0..4 {
+            mean[axis] += p[axis] * weight;
+        }
+    }
+    mean = mean.map(|sum| sum / total.max(1.0));
+    let mut error = [0.0_f32; 4];
+    for &m in &members {
+        let (p, weight) = entries[m];
+        for axis in 0..4 {
+            error[axis] += (p[axis] - mean[axis]) * (p[axis] - mean[axis]) * weight;
+        }
+    }
+    let axis = (0..4).fold(0, |best, a| if error[a] > error[best] { a } else { best });
+    Cluster {
+        members,
+        mean,
+        spread: (error[axis], axis),
+    }
+}
+
+/// Median cut: keep splitting the cluster with the largest error at its mean
+/// along its widest axis, then refine the centres with a few k-means rounds.
+fn palette(entries: &[(Point, f32)], colors: usize) -> Vec<Point> {
+    let mut clusters = vec![cluster((0..entries.len()).collect(), entries)];
+    while clusters.len() < colors {
+        let Some(widest) = (0..clusters.len())
+            .filter(|&c| clusters[c].members.len() > 1 && clusters[c].spread.0 > 0.0)
+            .reduce(|best, c| {
+                if clusters[c].spread.0 > clusters[best].spread.0 {
+                    c
+                } else {
+                    best
+                }
+            })
+        else {
+            break;
+        };
+        let target = clusters.swap_remove(widest);
+        let (axis, cut) = (target.spread.1, target.mean[target.spread.1]);
+        let (low, high): (Vec<usize>, Vec<usize>) = target
+            .members
+            .iter()
+            .partition(|&&m| entries[m].0[axis] <= cut);
+        if low.is_empty() || high.is_empty() {
+            // All remaining spread is numerical noise; stop splitting this one.
+            clusters.push(Cluster {
+                spread: (0.0, axis),
+                ..target
+            });
+            continue;
+        }
+        clusters.push(cluster(low, entries));
+        clusters.push(cluster(high, entries));
+    }
+    let mut centres: Vec<Point> = clusters.iter().map(|c| c.mean).collect();
+    for _ in 0..REFINEMENTS {
+        let mut sums = vec![([0.0_f32; 4], 0.0_f32); centres.len()];
+        for (p, weight) in entries {
+            let nearest = nearest_point(*p, &centres);
+            for (sum, value) in sums[nearest].0.iter_mut().zip(p) {
+                *sum += value * weight;
+            }
+            sums[nearest].1 += weight;
+        }
+        for (centre, (sum, weight)) in centres.iter_mut().zip(sums) {
+            if weight > 0.0 {
+                *centre = sum.map(|value| value / weight);
+            }
+        }
+    }
+    centres
+}
+
+fn nearest_point(p: Point, centres: &[Point]) -> usize {
+    let mut best = (0_usize, f32::INFINITY);
+    for (index, centre) in centres.iter().enumerate() {
+        let d = squared_distance(p, *centre);
+        if d < best.1 {
+            best = (index, d);
+        }
+    }
+    best.0
 }
 
 /// Nearest palette entry per pixel. No dithering: on real app artwork error
 /// diffusion lowered perceptual scores, enlarged files and, when applied to
 /// alpha, turned soft edges into speckle.
-fn remap(rgba: &[[u8; 4]], palette: &[[u8; 4]]) -> Vec<u8> {
+fn remap(pixels: &[[u8; 4]], palette: &[[u8; 4]]) -> Vec<u8> {
+    let centres: Vec<Point> = palette.iter().map(|c| point(*c)).collect();
     let mut known: HashMap<[u8; 4], u8> = HashMap::new();
-    rgba.iter()
+    pixels
+        .iter()
         .map(|pixel| {
-            *known.entry(*pixel).or_insert_with(|| {
-                let mut best = (0_usize, f32::INFINITY);
-                for (index, entry) in palette.iter().enumerate() {
-                    let d = distance(*pixel, *entry);
-                    if d < best.1 {
-                        best = (index, d);
-                    }
-                }
-                best.0 as u8
-            })
+            *known
+                .entry(*pixel)
+                .or_insert_with(|| nearest_point(point(*pixel), &centres) as u8)
         })
         .collect()
 }
@@ -91,6 +243,13 @@ fn snap_alpha(mut palette: Vec<[u8; 4]>, pixels: &[[u8; 4]], indexes: &[u8]) -> 
         }
     }
     palette
+}
+
+fn palette_points(pixels: &[[u8; 4]], colors: usize) -> Vec<[u8; 4]> {
+    palette(&histogram(pixels), colors)
+        .into_iter()
+        .map(colour)
+        .collect()
 }
 
 /// Quantize a PNG to an indexed PNG with at most `colors` palette entries.
@@ -119,23 +278,13 @@ pub(crate) fn quantize(png_bytes: &[u8], colors: usize, max_pixels: usize) -> Re
         );
     }
     ensure!(pixels.len() == pixel_count, "truncated_png");
-    let colours: Vec<Color> = pixels
-        .iter()
-        .map(|p| Color {
-            r: p[0],
-            g: p[1],
-            b: p[2],
-            a: p[3],
-        })
-        .collect();
-    let (palette, _) = convert_to_indexed(
-        &colours,
-        width as usize,
-        colors,
-        &optimizer::KMeans,
-        &ditherer::None,
-    );
-    let palette: Vec<[u8; 4]> = palette.iter().map(|c| [c.r, c.g, c.b, c.a]).collect();
+    // Distinct entries only: two clusters can round to the same 8-bit colour.
+    let mut palette: Vec<[u8; 4]> = Vec::with_capacity(colors);
+    for entry in palette_points(&pixels, colors) {
+        if !palette.contains(&entry) {
+            palette.push(entry);
+        }
+    }
     ensure!(!palette.is_empty(), "quantizer_produced_no_palette");
     let indexes = remap(&pixels, &palette);
     let palette = snap_alpha(palette, &pixels, &indexes);
@@ -287,6 +436,48 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_same_input_always_produces_the_same_bytes() {
+        let source = gradient(120, 90, false);
+        let first = quantize(&source, 64, 1 << 20).unwrap();
+        for _ in 0..4 {
+            assert_eq!(quantize(&source, 64, 1 << 20).unwrap(), first);
+        }
+    }
+
+    #[test]
+    fn few_colours_are_reproduced_exactly() {
+        let mut source = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut source, 8, 8);
+            encoder.set_color(png::ColorType::Rgba);
+            let colours = [
+                [255, 0, 0, 255],
+                [0, 255, 0, 255],
+                [0, 0, 255, 128],
+                [0, 0, 0, 0],
+            ];
+            let data: Vec<u8> = (0..64).flat_map(|i| colours[i % 4]).collect();
+            encoder
+                .write_header()
+                .unwrap()
+                .write_image_data(&data)
+                .unwrap();
+        }
+        let quantized = quantize(&source, 16, 1 << 20).unwrap();
+        crate::png_pixels::ensure_same_rgba(&source, &quantized, 1 << 24)
+            .or_else(|_| {
+                // RGB under fully transparent pixels is not preserved by design.
+                let decode = |b: &[u8]| crate::image_backend::decode(b, 1 << 20).map(|d| d.pixels);
+                anyhow::ensure!(
+                    decode(&source)? == decode(&quantized)?,
+                    "visible pixels differ"
+                );
+                Ok(())
+            })
+            .unwrap();
     }
 
     #[test]
