@@ -339,8 +339,14 @@ fn web_analyzes_local_project_without_uploads_and_serves_review() {
             .iter()
             .any(|c| c["format"] == "png" && c["artifact"].is_string() && c["sha256"].is_string())
     );
+    // Without ImageIO only the bundled codecs produce candidates.
     #[cfg(not(target_os = "macos"))]
-    assert!(candidates.iter().all(|c| c["format"] == "png"));
+    assert!(
+        candidates
+            .iter()
+            .all(|c| c["format"] == "png" || c["format"] == "webp")
+    );
+    assert!(candidates.iter().any(|c| c["format"] == "webp"));
     assert_eq!(fs::read(root.join("image.png")).unwrap(), original);
     let capabilities = body_of(&request(address, "GET", "/api/capabilities", &session, ""));
     assert_eq!(
