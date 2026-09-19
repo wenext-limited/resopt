@@ -27,7 +27,7 @@ required-features = ["native"]
 
 [features]
 default = ["native"]
-native = ["dep:svga", "dep:tiny-skia", "dep:svgtypes", "dep:webp", "dep:ignore", "dep:regex", "dep:maud", "dep:tiny_http", "dep:getrandom", "dep:clap", "dep:tempfile", "dep:toml", "dep:walkdir", "dep:xcassets", "dep:rayon", "dep:flate2", "dep:libdeflater", "dep:objc2", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-image-io", "oxipng/parallel"]
+native = ["dep:svga", "dep:tiny-skia", "dep:svgtypes", "dep:webp", "dep:ignore", "dep:regex", "dep:maud", "dep:tiny_http", "dep:getrandom", "dep:clap", "dep:tempfile", "dep:toml", "dep:walkdir", "dep:xcassets", "dep:rayon", "dep:objc2", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-image-io", "oxipng/parallel"]
 
 [dependencies]
 ignore = { version = "0.4.33", optional = true }
@@ -47,8 +47,6 @@ toml = { version = "0.8", optional = true }
 walkdir = { version = "2", optional = true }
 xcassets = { version = "0.3", optional = true }
 rayon = { version = "1", optional = true }
-flate2 = { version = "1.1", optional = true }
-libdeflater = { version = "1.26", optional = true }
 fast-ssim2 = "0.8.2"
 webp = { version = "0.3.1", default-features = false, optional = true }
 svga = { version = "0.1", features = ["libdeflate"], optional = true }
