@@ -81,10 +81,6 @@ function renderMultiSelection(pane) {
   const items = state.filtered.filter(r => state.selectedRecords.has(r));
   const block = el('section', 'multi-selection');
   block.append(el('strong', '', t('multiSelected', count(items.length))), el('p', '', t('multiSelectedHint')));
-  if (state.token && state.phase === 'ready') {
-    const action = el('button', 'primary', t('batchSelected', count(items.length))); action.type = 'button';
-    action.addEventListener('click', () => $('batch-open').click()); block.append(action);
-  }
   pane.append(block);
 }
 

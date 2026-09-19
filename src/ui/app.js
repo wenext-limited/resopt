@@ -143,6 +143,7 @@ function renderSummary() {
   }
   const live = !!state.token && state.phase === 'ready';
   $('batch-open').hidden = !live; $('restore-all-open').hidden = !live;
+  $('batch-open').textContent = state.selectedRecords.size > 1 ? t('batchSelected', count(state.selectedRecords.size)) : t('batch');
   $('batch-open').disabled = !opportunities.length && !modes.warnings; $('restore-all-open').disabled = !modes.applied;
 }
 

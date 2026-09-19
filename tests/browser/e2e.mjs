@@ -75,7 +75,8 @@ try {
     assert.ok(await browser.evaluate(`!!document.querySelector('.multi-selection')`));
     await browser.evaluate(`document.querySelectorAll('.resource-row')[1].dispatchEvent(new MouseEvent('click', { bubbles: true, altKey: true }))`);
     assert.equal(await browser.evaluate(`document.querySelectorAll('.resource-row[aria-selected="true"]').length`), 2);
-    await click('.multi-selection .primary');
+    assert.match(await text('#batch-open'), /(selected|已选)/i);
+    await click('#batch-open');
     assert.match(await text('#batch-scope-label'), /(selected|已选)/i);
     await click('#batch-close');
     await browser.evaluate(`document.querySelector('.resource-row').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);

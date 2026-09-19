@@ -47,4 +47,4 @@ dialog h3{font-size:13px;margin:16px 0 6px}.check{display:flex;gap:9px;align-ite
 .file-copy{flex:1 1 0;min-width:0}.filename-row{display:flex;align-items:center;gap:5px;width:100%;min-width:0}.filename-row .filename{min-width:0;flex:1}
 .optimized-badge{flex-shrink:0;padding:1px 5px;border-radius:4px;background:var(--optimized-pill);color:var(--optimized-ink);font-size:9px;font-weight:650;white-space:nowrap}.optimized-badge[hidden]{display:none}
 .optimized-copy,.tag.optimized-status{color:var(--optimized-ink)}.tag.optimized-status{background:var(--optimized-pill)}
-.multi-selection{padding:13px;border:1px solid var(--line);border-radius:9px;background:var(--surface);margin-bottom:17px}.multi-selection p{margin:4px 0 10px;color:var(--muted);font-size:11px}.multi-selection button{padding:8px 12px;border:1px solid var(--accent);border-radius:6px;background:var(--accent);color:#fff}
+.multi-selection{padding:13px;border:1px solid var(--line);border-radius:9px;background:var(--surface);margin-bottom:17px}.multi-selection p{margin:4px 0 0;color:var(--muted);font-size:11px}
