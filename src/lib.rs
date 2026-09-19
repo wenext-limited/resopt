@@ -48,6 +48,8 @@ pub use similarity::{Fingerprint, SimilarGroup};
 #[cfg(feature = "native")]
 mod svga;
 #[cfg(feature = "native")]
+mod svga_render;
+#[cfg(feature = "native")]
 mod timings;
 #[cfg(feature = "native")]
 mod tools;
