@@ -70,6 +70,7 @@ const MESSAGES = {
     issue_webp_candidates_disabled: 'WebP candidates were turned off for this run (--no-webp)',
     issue_preview_unavailable: 'This animation could not be rendered for preview ({0}); optimization is verified on its bytes and is unaffected',
     issue_near_lossless: 'Near-lossless: the encoder’s highest quality. Apple’s HEIC encoder has no lossless mode, so a small share of samples still changes; see the measured error',
+    issue_not_encoded: 'Not encoded: quality {0} was already not smaller than the original, so a higher quality cannot be',
     issue_palette: 'Reduced to a palette of {0} colours (lossy); the file stays a PNG',
     issue_backend: 'Listed in the inventory; resopt has no optimizer for this type yet', issue_macos: 'Decoding this format needs Apple ImageIO (macOS)', issue_min_sdk: 'WebP here needs API {1}+, but minSdk is {0}', issue_metadata: 'Not carried into the new file: {0}',
   },
@@ -142,6 +143,7 @@ const MESSAGES = {
     issue_webp_candidates_disabled: '本次运行已关闭 WebP 候选（--no-webp）',
     issue_preview_unavailable: '无法渲染此动画的预览（{0}）；优化按字节校验，不受影响',
     issue_near_lossless: '近无损：编码器的最高质量。Apple 的 HEIC 编码器没有无损模式，仍有少量采样值发生变化，请参考实测误差',
+    issue_not_encoded: '未编码：质量 {0} 已经不比原文件小，更高质量不可能更小',
     issue_palette: '颜色缩减为 {0} 色调色板（有损）；文件仍为 PNG',
     issue_backend: '已纳入清单；resopt 暂无此类型的优化器', issue_macos: '解码此格式需要 Apple ImageIO（macOS）', issue_min_sdk: '此处使用 WebP 需要 API {1}+，但 minSdk 为 {0}', issue_metadata: '不会带入新文件：{0}',
   },
@@ -173,6 +175,8 @@ function issueText(locale, reason) {
   if (text.endsWith('_decoding_requires_macos_imageio')) return translate(locale, 'issue_macos');
   const sdk = text.match(/^android_min_sdk_(\d+)_below_webp_requirement_(\d+)$/);
   if (sdk) return translate(locale, 'issue_min_sdk', [sdk[1], sdk[2]]);
+  const skipped = text.match(/^not_encoded_quality_(\d+)_was_not_smaller$/);
+  if (skipped) return translate(locale, 'issue_not_encoded', [skipped[1]]);
   const palette = text.match(/^palette_colors: (\d+)$/);
   if (palette) return translate(locale, 'issue_palette', [palette[1]]);
   const preview = text.match(/^preview_unavailable: (.+)$/);

@@ -174,6 +174,7 @@ test('locale selection and issue sentences', () => {
   assert.match(api.issueText('en', 'metadata_not_carried_over: tEXt, eXIf'), /tEXt, eXIf/);
   assert.match(api.issueText('en', 'palette_colors: 128'), /palette of 128 colours/);
   assert.match(api.issueText('en', 'near_lossless'), /no lossless mode/);
+  assert.match(api.issueText('en', 'not_encoded_quality_75_was_not_smaller'), /quality 75 was already not smaller/);
   assert.equal(api.issueText('en', 'some_new_reason'), 'some_new_reason');
 });
 

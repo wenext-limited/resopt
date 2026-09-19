@@ -87,3 +87,34 @@ option that affects candidates, the tool version and the codec backend all
 match. Tests cover content changes, option changes, corrupted and truncated
 entries, interrupted writes, foreign entries and traversal attempts
 (`src/cache.rs`, `tests/pipeline.rs`).
+
+## Skipping encodes that cannot win (after 0.6.1)
+
+The default run gained WebP, lossy PNG and near-lossless HEIC candidates after
+the measurements above, which took the same project copy from 152 s to 206 s
+cold. `--timings` now reports lossy encoding per format, and it showed HEIC at
+about 80% of all encode time.
+
+Capping concurrent ImageIO encodes was tried and rejected: wall time on a
+50-image sample went from 7.3 s to 12–19 s, so the encoder does parallelize at
+these image sizes.
+
+What worked is not encoding candidates that cannot be used. Qualities run in
+ascending order; when one overshoots the source size by a safe margin, higher
+qualities of that format are skipped and the candidate says so.
+
+| Run (same project copy, cold, defaults) | Wall | Lossy encodes skipped | Usable candidates |
+|---|---:|---:|---:|
+| Before | 206.2 s | 0 of 16,265 | 7,478 |
+| Skip when a lower quality is not smaller | 121.7 s | 5,075 | 7,473 (5 lost) |
+| Skip only with a margin (5%; 25% before HEIC quality 100) — **shipped** | **129.4 s** | 4,144 | **7,478 (identical set, same recommended savings)** |
+
+The margins come from the data: in 10,634 encodes size was non-monotonic five
+times — once between regular qualities (lower quality 0.7% over the source) and
+four times at HEIC quality 100, where the encoder changes mode (lower quality up
+to 13% over). Palette sizes for lossy PNG are exempt: on one real icon 128
+colours compressed *worse* than 256.
+
+Two runs of an unchanged binary differ in about 10 HEIC files by a few bytes:
+Apple's encoder is not perfectly deterministic, which is why the comparison is
+on the candidate set and sizes, not on hashes.

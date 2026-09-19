@@ -12,7 +12,10 @@ pub(crate) enum Phase {
     Hash,
     Decode,
     EncodeLossless,
-    EncodeLossy,
+    EncodeJpeg,
+    EncodeHeic,
+    EncodeWebp,
+    EncodeLossyPng,
     Score,
     Preview,
     Write,
@@ -20,12 +23,15 @@ pub(crate) enum Phase {
     Report,
 }
 
-const PHASES: [(Phase, &str); 10] = [
+const PHASES: [(Phase, &str); 13] = [
     (Phase::Scan, "scan"),
     (Phase::Hash, "hash"),
     (Phase::Decode, "decode"),
     (Phase::EncodeLossless, "encode_lossless"),
-    (Phase::EncodeLossy, "encode_lossy"),
+    (Phase::EncodeJpeg, "encode_lossy_jpeg"),
+    (Phase::EncodeHeic, "encode_lossy_heic"),
+    (Phase::EncodeWebp, "encode_lossy_webp"),
+    (Phase::EncodeLossyPng, "encode_lossy_png"),
     (Phase::Score, "score"),
     (Phase::Preview, "preview"),
     (Phase::Write, "write"),

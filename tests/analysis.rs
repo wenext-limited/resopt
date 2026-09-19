@@ -54,9 +54,41 @@ fn inventory_includes_loose_catalog_data_and_unknown_resources() {
         b"binary",
     );
     write(root.path(), "View.swift", b"source");
+    write(
+        root.path(),
+        "Resources/settings.json",
+        br#"{"theme":"dark"}"#,
+    );
+    write(
+        root.path(),
+        "Resources/confetti.json",
+        br#"{"v":"5.7.4","fr":30,"ip":0,"op":60,"w":200,"h":200,"layers":[]}"#,
+    );
     write(root.path(), ".build/ignored.png", &png(255));
     write(root.path(), "Pods/Library/Resources/image.png", &png(255));
     let report = inventory(root.path()).unwrap();
+    // JSON metadata and data are not resources; a Lottie animation is.
+    assert!(
+        report
+            .assets
+            .iter()
+            .all(|a| !a.path.ends_with("Contents.json"))
+    );
+    assert!(
+        report
+            .assets
+            .iter()
+            .all(|a| !a.path.ends_with("settings.json"))
+    );
+    let lottie = report
+        .assets
+        .iter()
+        .find(|a| a.path.ends_with("confetti.json"))
+        .unwrap();
+    assert_eq!(
+        (lottie.kind.as_str(), lottie.format.as_str()),
+        ("animation", "lottie")
+    );
     assert_eq!(report.assets.len(), 11);
     assert!(
         report
@@ -66,7 +98,8 @@ fn inventory_includes_loose_catalog_data_and_unknown_resources() {
     );
     assert!(report.assets.iter().any(|a| a.kind == "unclassified"));
     assert!(report.assets.iter().any(|a| a.path.ends_with("file.bin")));
-    assert_eq!(report.skipped_source_or_tooling_files, 1);
+    // View.swift, settings.json and the catalog's Contents.json.
+    assert_eq!(report.skipped_source_or_tooling_files, 3);
 }
 
 #[test]

@@ -8,7 +8,7 @@ use crate::{
     timings::{Phase, Timings},
     webp_backend,
 };
-use anyhow::{Result, ensure};
+use anyhow::{Context as _, Result, ensure};
 use std::path::{Path, PathBuf};
 
 /// The encoder's highest quality setting. For HEIC it is "near-lossless": on
@@ -71,6 +71,11 @@ pub(crate) fn trials(
 ) -> (Vec<Trial>, Vec<String>) {
     let mut trials = Vec::new();
     let mut issues = Vec::new();
+    // Ascending, so that the first quality that is not smaller than the source
+    // lets every higher one be skipped.
+    let mut qualities = options.qualities.clone();
+    qualities.sort_unstable();
+    let qualities = &qualities;
     if resource.format == "png" {
         trials.push(Trial {
             format: "png",
@@ -84,13 +89,13 @@ pub(crate) fn trials(
     // Same format, same name, same references: only the pixels change. Locked
     // files returned above, so nine-patch markers are never quantized.
     if options.lossy_png && resource.format == "png" {
-        trials.extend(options.qualities.iter().map(|quality| Trial {
+        trials.extend(qualities.iter().map(|quality| Trial {
             format: "png",
             quality: Some(*quality),
         }));
     }
     let lossy = |format: &'static str| {
-        options.qualities.iter().map(move |quality| Trial {
+        qualities.iter().map(move |quality| Trial {
             format,
             quality: Some(*quality),
         })
@@ -143,6 +148,19 @@ pub(crate) fn trials(
         }
     }
     (trials, issues)
+}
+
+/// How far a lower quality must exceed the source before a higher quality is
+/// skipped unencoded. Measured on 10,634 real encodes: size was non-monotonic
+/// five times, once between regular qualities (the lower one 0.7% over the
+/// source) and four times at HEIC quality 100, where the encoder changes mode
+/// (the lower one up to 13% over). The margins leave headroom over both.
+fn skip_margin(format: &str, quality: u8) -> f64 {
+    if format == "heic" && quality == NEAR_LOSSLESS_QUALITY {
+        1.25
+    } else {
+        1.05
+    }
 }
 
 /// Policy for the lossless pass after quantization: reductions are always
@@ -278,6 +296,13 @@ fn analyze_into(
     );
     result.issues.extend(issues);
     let mut scorer = crate::quality::ReferenceScorer::new(&decoded);
+    // Prepared on first use and shared by every palette size.
+    let mut quantizer: Option<crate::png_quantize::Quantizer> = None;
+    // Qualities that failed to beat the source, with how far they overshot it.
+    // Trials run in ascending quality and a higher quality is practically
+    // never smaller, so the remaining (and most expensive) encodes are skipped
+    // when the overshoot leaves a safe margin (see `skip_margin`).
+    let mut not_smaller: Vec<(&'static str, u8, f64)> = Vec::new();
     for trial in trials {
         if context.control.is_cancelled() {
             result.status = "not_analyzed".into();
@@ -300,18 +325,39 @@ fn analyze_into(
             warnings: vec![],
             notes: vec![],
         };
+        if let Some(quality) = quality
+            && let Some((_, lower, _)) = not_smaller.iter().find(|(skipped, lower, overshoot)| {
+                *skipped == format && *lower < quality && *overshoot >= skip_margin(format, quality)
+            })
+        {
+            candidate
+                .notes
+                .push(format!("not_encoded_quality_{lower}_was_not_smaller"));
+            result.candidates.push(candidate);
+            continue;
+        }
         let checked = (|| -> Result<()> {
-            let phase = if quality.is_some() {
-                Phase::EncodeLossy
-            } else {
-                Phase::EncodeLossless
+            let phase = match (format, quality) {
+                (_, None) => Phase::EncodeLossless,
+                ("jpeg", _) => Phase::EncodeJpeg,
+                ("heic", _) => Phase::EncodeHeic,
+                ("webp", _) => Phase::EncodeWebp,
+                _ => Phase::EncodeLossyPng,
             };
             let bytes = timings.time(phase, || match (format, quality) {
                 ("webp", Some(quality)) => webp_backend::encode(original, &decoded, quality),
                 ("png", Some(quality)) => {
                     let colors = crate::png_quantize::colors_for_quality(quality);
-                    let indexed =
-                        crate::png_quantize::quantize(original, colors, options.max_pixels)?;
+                    if quantizer.is_none() {
+                        quantizer = Some(crate::png_quantize::Quantizer::new(
+                            original,
+                            options.max_pixels,
+                        )?);
+                    }
+                    let indexed = quantizer
+                        .as_ref()
+                        .context("quantizer unavailable")?
+                        .quantize(colors)?;
                     // A lossless pass over the quantized image: smaller, same pixels.
                     Ok(optimizer::optimize(&indexed, &lossless_pass(options)).unwrap_or(indexed))
                 }
@@ -323,6 +369,14 @@ fn analyze_into(
             candidate.savings_bytes = (original.len() as u64).saturating_sub(candidate.bytes);
             // A candidate that is not smaller is never scored, previewed or written.
             if candidate.savings_bytes < options.min_savings_bytes.max(1) {
+                // Only for real encoder qualities. A palette size is not one:
+                // 128 colours can compress worse than 256 on the same image.
+                if let Some(quality) = quality
+                    && format != "png"
+                {
+                    let overshoot = candidate.bytes as f64 / original.len().max(1) as f64;
+                    not_smaller.push((format, quality, overshoot));
+                }
                 return Ok(());
             }
             let after = timings.time(Phase::Decode, || {

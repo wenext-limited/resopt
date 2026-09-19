@@ -514,3 +514,56 @@ fn lossy_png_candidates_are_opt_in_at_apply_time_and_restore_exactly() {
     assert_eq!(restore_report(&out).unwrap().applied, 1);
     assert_eq!(fs::read(&source).unwrap(), bytes);
 }
+
+/// Qualities run in ascending order; once one overshoots the source by a safe
+/// margin, higher qualities of that format are not encoded at all.
+#[test]
+fn higher_qualities_are_skipped_once_a_lower_one_is_clearly_not_smaller() {
+    let base = tempfile::tempdir().unwrap();
+    let project = base.path().join("project");
+    // A WebP already encoded at a very low quality: re-encoding at 50, 70 or 90
+    // can only be larger, and by far more than the safety margin.
+    let noise: Vec<u8> = (0..96 * 96_u32)
+        .flat_map(|p| {
+            let v = p.wrapping_mul(2_654_435_761);
+            [(v >> 8) as u8, (v >> 16) as u8, (v >> 24) as u8, 255]
+        })
+        .collect();
+    let source = webp::Encoder::from_rgba(&noise, 96, 96)
+        .encode_simple(false, 5.0)
+        .unwrap();
+    write(&project, "noise.webp", &source);
+    let report = analyze(
+        &project,
+        base.path().join("report"),
+        AnalysisOptions {
+            // Deliberately unsorted.
+            qualities: vec![90, 50, 70],
+            heic_near_lossless: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let row = &report.resources[0];
+    let webp: Vec<_> = row
+        .candidates
+        .iter()
+        .filter(|c| c.format == "webp" && c.lossy)
+        .collect();
+    assert_eq!(
+        webp.iter().map(|c| c.quality).collect::<Vec<_>>(),
+        [Some(50), Some(70), Some(90)],
+        "trials run in ascending quality"
+    );
+    assert!(
+        webp[0].bytes as usize > source.len() * 105 / 100,
+        "{:?}",
+        webp[0]
+    );
+    assert!(webp[0].artifact.is_none() && webp[0].notes.is_empty());
+    for skipped in &webp[1..] {
+        assert_eq!(skipped.bytes, 0, "{skipped:?}");
+        assert!(skipped.artifact.is_none() && !skipped.valid);
+        assert_eq!(skipped.notes, ["not_encoded_quality_50_was_not_smaller"]);
+    }
+}

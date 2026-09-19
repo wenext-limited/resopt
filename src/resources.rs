@@ -176,9 +176,21 @@ pub fn inventory_with_options(
                 continue;
             }
         };
-        let format = actual_format(&header[..read])
-            .unwrap_or_else(|| extension_format(&extension))
-            .to_string();
+        // JSON is configuration, catalog metadata or localization, not a
+        // resource to optimize: listing it buried real assets under thousands
+        // of rows. The exception is a Lottie animation, which is artwork.
+        let lottie = extension == "json" && looks_like_lottie(&header[..read]);
+        if extension == "json" && !lottie {
+            report.skipped_source_or_tooling_files += 1;
+            continue;
+        }
+        let format = if lottie {
+            "lottie".to_string()
+        } else {
+            actual_format(&header[..read])
+                .unwrap_or_else(|| extension_format(&extension))
+                .to_string()
+        };
         let kind = kind(&format).to_string();
         let extension_mismatch =
             matches!(kind.as_str(), "image") && extension_format(&extension) != format;
@@ -238,6 +250,16 @@ pub fn inventory_with_options(
     report.excluded_directories.sort();
     report.diagnostics.sort();
     Ok(report)
+}
+
+/// Bodymovin/Lottie exports start with their version, frame rate and in/out
+/// points; ordinary JSON data does not carry that combination up front.
+fn looks_like_lottie(header: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(header);
+    text.trim_start().starts_with('{')
+        && text.contains("\"v\"")
+        && text.contains("\"fr\"")
+        && (text.contains("\"ip\"") || text.contains("\"op\"") || text.contains("\"layers\""))
 }
 
 pub(crate) fn actual_format(bytes: &[u8]) -> Option<&'static str> {

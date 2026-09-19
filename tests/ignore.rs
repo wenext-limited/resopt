@@ -17,7 +17,7 @@ fn paths(root: &Path, include_ignored: bool) -> Vec<String> {
 fn gitignore_nested_negations_and_git_exclude_are_default() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    write(root, ".git/info/exclude", b"private.json\n");
+    write(root, ".git/info/exclude", b"private.dat\n");
     write(root, ".gitignore", b"*.png\n!keep.png\nignored/\n");
     write(root, "nested/.gitignore", b"!rescue.png\n");
     for p in [
@@ -26,9 +26,9 @@ fn gitignore_nested_negations_and_git_exclude_are_default() {
         "nested/rescue.png",
         "nested/drop.png",
         "ignored/keep.png",
-        "private.json",
-        "normal.json",
-        ".hidden/data.json",
+        "private.dat",
+        "normal.dat",
+        ".hidden/data.dat",
     ] {
         write(root, p, b"data");
     }
@@ -36,8 +36,8 @@ fn gitignore_nested_negations_and_git_exclude_are_default() {
     for path in [
         "keep.png",
         "nested/rescue.png",
-        "normal.json",
-        ".hidden/data.json",
+        "normal.dat",
+        ".hidden/data.dat",
     ] {
         assert!(
             visible.contains(&path.into()),
@@ -48,7 +48,7 @@ fn gitignore_nested_negations_and_git_exclude_are_default() {
         "skip.png",
         "nested/drop.png",
         "ignored/keep.png",
-        "private.json",
+        "private.dat",
     ] {
         assert!(!visible.contains(&path.into()), "included {path}");
         assert!(paths(root, true).contains(&path.into()));
@@ -120,7 +120,7 @@ fn parent_rules_apply_when_scanning_a_project_subdirectory() {
     let root = dir.path();
     write(root, ".gitignore", b"*.png\n");
     write(root, "sub/image.png", b"image");
-    write(root, "sub/keep.json", b"{}");
+    write(root, "sub/keep.dat", b"{}");
     assert!(!paths(&root.join("sub"), false).contains(&"image.png".into()));
     assert!(paths(&root.join("sub"), true).contains(&"image.png".into()));
 }

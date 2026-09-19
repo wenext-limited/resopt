@@ -12,6 +12,10 @@
 - SVGA optimization now runs on the published [`svga`](https://crates.io/crates/svga) crate, extracted from resopt's own implementation. Results on real files are byte-for-byte unchanged. Embedded images are edited by position (svga 0.1.1), so an image stored under a key that is not valid UTF-8 is optimized too.
 - WebP candidates are compared by default for loose files and Android resources; pass `--no-webp` to skip them. `--webp` is still accepted and has no effect.
 
+### Changed
+- **JSON files are no longer listed as resources.** Catalog `Contents.json`, configuration and other JSON data buried real assets under thousands of rows. A Lottie animation (JSON with Lottie's version, frame-rate and frame-range keys up front) is still listed, as an animation.
+- **Faster analysis.** Lossy qualities are tried in ascending order, and once one overshoots the original by a safe margin the higher — and most expensive — qualities of that format are not encoded. The report says so on those candidates. The margins (5%, and 25% before skipping HEIC quality 100) come from 10,634 real encodes, where size was non-monotonic five times and never by more than 13%; with them, a 2,730-resource project produced exactly the same usable candidates in 129 s instead of 206 s. Palette sizes for lossy PNG are exempt, because PNG size is not monotonic in palette size. The PNG quantizer decodes and builds its histogram once for all palette sizes. Per-format encode timings are reported by `--timings`.
+
 ### Fixed
 - A project lock released a moment earlier could still read as busy while another thread was starting a helper process (git, aapt2), which could fail one file of a batch. Acquiring now waits briefly before reporting the project as busy.
 

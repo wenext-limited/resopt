@@ -245,70 +245,92 @@ fn snap_alpha(mut palette: Vec<[u8; 4]>, pixels: &[[u8; 4]], indexes: &[u8]) -> 
     palette
 }
 
-fn palette_points(pixels: &[[u8; 4]], colors: usize) -> Vec<[u8; 4]> {
-    palette(&histogram(pixels), colors)
-        .into_iter()
-        .map(colour)
-        .collect()
+/// A decoded PNG prepared for quantization. Decoding and the colour histogram
+/// are shared by every palette size tried for one image.
+pub(crate) struct Quantizer {
+    width: u32,
+    height: u32,
+    pixels: Vec<[u8; 4]>,
+    histogram: Vec<(Point, f32)>,
+    carried: Vec<([u8; 4], Vec<u8>)>,
 }
 
-/// Quantize a PNG to an indexed PNG with at most `colors` palette entries.
+impl Quantizer {
+    pub(crate) fn new(png_bytes: &[u8], max_pixels: usize) -> Result<Self> {
+        let mut reader = crate::png_pixels::reader(png_bytes, 1 << 30)?;
+        let info = reader.info();
+        ensure!(
+            info.animation_control.is_none(),
+            "multiple_frames_not_transcoded"
+        );
+        let (width, height) = (info.width, info.height);
+        let pixel_count = (width as usize)
+            .checked_mul(height as usize)
+            .filter(|n| *n > 0 && *n <= max_pixels.min(crate::MAX_PIXELS_LIMIT))
+            .context("decoded_image_exceeds_max_pixels")?;
+        let mut pixels: Vec<[u8; 4]> = Vec::with_capacity(pixel_count);
+        while let Some(row) = crate::png_pixels::next_rgba_row(&mut reader)? {
+            // Rows are RGBA16; reducing 16-bit sources is part of what makes this
+            // candidate lossy.
+            pixels.extend(
+                row.as_chunks::<4>()
+                    .0
+                    .iter()
+                    .map(|p| p.map(|sample| (sample >> 8) as u8)),
+            );
+        }
+        ensure!(pixels.len() == pixel_count, "truncated_png");
+        Ok(Self {
+            width,
+            height,
+            histogram: histogram(&pixels),
+            pixels,
+            carried: carried_chunks(png_bytes),
+        })
+    }
+
+    /// An indexed PNG with at most `colors` palette entries.
+    pub(crate) fn quantize(&self, colors: usize) -> Result<Vec<u8>> {
+        ensure!((2..=256).contains(&colors), "invalid_palette_size");
+        // Distinct entries only: two clusters can round to the same 8-bit colour.
+        let mut entries: Vec<[u8; 4]> = Vec::with_capacity(colors);
+        for entry in palette(&self.histogram, colors).into_iter().map(colour) {
+            if !entries.contains(&entry) {
+                entries.push(entry);
+            }
+        }
+        ensure!(!entries.is_empty(), "quantizer_produced_no_palette");
+        let indexes = remap(&self.pixels, &entries);
+        let entries = snap_alpha(entries, &self.pixels, &indexes);
+        let mut output = Vec::new();
+        {
+            let mut encoder = png::Encoder::new(&mut output, self.width, self.height);
+            encoder.set_color(png::ColorType::Indexed);
+            encoder.set_depth(png::BitDepth::Eight);
+            encoder.set_palette(
+                entries
+                    .iter()
+                    .flat_map(|c| [c[0], c[1], c[2]])
+                    .collect::<Vec<u8>>(),
+            );
+            if entries.iter().any(|c| c[3] < 255) {
+                encoder.set_trns(entries.iter().map(|c| c[3]).collect::<Vec<u8>>());
+            }
+            let mut writer = encoder.write_header()?;
+            for (kind, data) in &self.carried {
+                writer.write_chunk(png::chunk::ChunkType(*kind), data)?;
+            }
+            writer.write_image_data(&indexes)?;
+        }
+        Ok(output)
+    }
+}
+
+/// One-shot form of [`Quantizer`].
+#[cfg(test)]
 pub(crate) fn quantize(png_bytes: &[u8], colors: usize, max_pixels: usize) -> Result<Vec<u8>> {
     ensure!((2..=256).contains(&colors), "invalid_palette_size");
-    let mut reader = crate::png_pixels::reader(png_bytes, 1 << 30)?;
-    let info = reader.info();
-    ensure!(
-        info.animation_control.is_none(),
-        "multiple_frames_not_transcoded"
-    );
-    let (width, height) = (info.width, info.height);
-    let pixel_count = (width as usize)
-        .checked_mul(height as usize)
-        .filter(|n| *n > 0 && *n <= max_pixels.min(crate::MAX_PIXELS_LIMIT))
-        .context("decoded_image_exceeds_max_pixels")?;
-    let mut pixels: Vec<[u8; 4]> = Vec::with_capacity(pixel_count);
-    while let Some(row) = crate::png_pixels::next_rgba_row(&mut reader)? {
-        // Rows are RGBA16; reducing 16-bit sources is part of what makes this
-        // candidate lossy.
-        pixels.extend(
-            row.as_chunks::<4>()
-                .0
-                .iter()
-                .map(|p| p.map(|sample| (sample >> 8) as u8)),
-        );
-    }
-    ensure!(pixels.len() == pixel_count, "truncated_png");
-    // Distinct entries only: two clusters can round to the same 8-bit colour.
-    let mut palette: Vec<[u8; 4]> = Vec::with_capacity(colors);
-    for entry in palette_points(&pixels, colors) {
-        if !palette.contains(&entry) {
-            palette.push(entry);
-        }
-    }
-    ensure!(!palette.is_empty(), "quantizer_produced_no_palette");
-    let indexes = remap(&pixels, &palette);
-    let palette = snap_alpha(palette, &pixels, &indexes);
-    let mut output = Vec::new();
-    {
-        let mut encoder = png::Encoder::new(&mut output, width, height);
-        encoder.set_color(png::ColorType::Indexed);
-        encoder.set_depth(png::BitDepth::Eight);
-        encoder.set_palette(
-            palette
-                .iter()
-                .flat_map(|c| [c[0], c[1], c[2]])
-                .collect::<Vec<u8>>(),
-        );
-        if palette.iter().any(|c| c[3] < 255) {
-            encoder.set_trns(palette.iter().map(|c| c[3]).collect::<Vec<u8>>());
-        }
-        let mut writer = encoder.write_header()?;
-        for (kind, data) in carried_chunks(png_bytes) {
-            writer.write_chunk(png::chunk::ChunkType(kind), &data)?;
-        }
-        writer.write_image_data(&indexes)?;
-    }
-    Ok(output)
+    Quantizer::new(png_bytes, max_pixels)?.quantize(colors)
 }
 
 #[cfg(test)]
