@@ -11,6 +11,9 @@ use crate::{
 use anyhow::{Result, ensure};
 use std::path::{Path, PathBuf};
 
+/// Longest side of thumbnails written into the report.
+const PREVIEW_SIDE: u32 = 256;
+
 pub(crate) struct Context<'a> {
     pub root: &'a Path,
     pub out: &'a Path,
@@ -94,7 +97,11 @@ pub(crate) fn trials(
             trials.extend(lossy("heic"));
         }
     }
-    if options.webp && !in_catalog(&resource.path) && resource.origin != "catalog_rendition" {
+    let webp_target = !in_catalog(&resource.path) && resource.origin != "catalog_rendition";
+    if !options.webp && webp_target && (android || resource.format == "webp") {
+        issues.push("webp_candidates_disabled".into());
+    }
+    if options.webp && webp_target {
         let gate = |lossless: bool| {
             if android {
                 android::webp_compatibility(min_sdk, lossless, has_alpha)
@@ -138,7 +145,9 @@ pub(crate) fn analyze(
     digest: &str,
 ) -> ResourceAnalysis {
     if resource.format == "svga" {
-        return crate::svga::analyze(context, resource, index, original, digest);
+        let mut row = crate::svga::analyze(context, resource, index, original, digest);
+        attach_animation_preview(context, &mut row, index, original);
+        return row;
     }
     let mut result = ResourceAnalysis::new(resource, "inspected");
     result.sha256 = Some(digest.to_string());
@@ -149,6 +158,43 @@ pub(crate) fn analyze(
         result.smallest_candidate = None;
     }
     result
+}
+
+/// Poster thumbnail and timing facts for an animation. Rendering problems
+/// never fail the row: optimization is verified on bytes, not on this picture.
+fn attach_animation_preview(
+    context: &Context<'_>,
+    row: &mut ResourceAnalysis,
+    index: usize,
+    original: &[u8],
+) {
+    if context.control.is_cancelled() || row.status == "not_analyzed" {
+        return;
+    }
+    let rendered = context.timings.time(Phase::Preview, || -> Result<_> {
+        let renderer = crate::svga_render::Renderer::new(original)?;
+        let poster = renderer.poster_frame();
+        let frame = renderer.render(poster, PREVIEW_SIDE)?;
+        let (width, height) = renderer.canvas_size();
+        let info = crate::analysis::AnimationInfo {
+            width,
+            height,
+            fps: renderer.fps(),
+            frames: renderer.frame_count(),
+            poster_frame: poster,
+        };
+        Ok((crate::svga_render::encode_png(&frame)?, info))
+    });
+    match rendered {
+        Ok((png, info)) => {
+            let preview = PathBuf::from(format!("previews/{index}-original.png"));
+            if write_artifact(&context.out.join(&preview), &png).is_ok() {
+                row.original_preview = Some(preview);
+            }
+            row.animation = Some(info);
+        }
+        Err(error) => row.issues.push(format!("preview_unavailable: {error:#}")),
+    }
 }
 
 fn analyze_into(
@@ -173,6 +219,14 @@ fn analyze_into(
     })?;
     result.image = Some(decoded.info.clone());
     result.fingerprint = crate::similarity::fingerprint(&decoded);
+    // Every decoded image gets a thumbnail, not only those with candidates:
+    // already-optimal, excluded and format-locked images must be viewable too.
+    let preview = PathBuf::from(format!("previews/{index}-original.png"));
+    let thumbnail = timings.time(Phase::Preview, || image_backend::preview(&decoded))?;
+    timings.time(Phase::Write, || {
+        write_artifact(&out.join(&preview), &thumbnail)
+    })?;
+    result.original_preview = Some(preview);
     if decoded.info.frames != 1 {
         result.issues.push("multiple_frames_not_transcoded".into());
         return Ok(());
@@ -309,14 +363,10 @@ fn analyze_into(
         .min_by_key(|(_, candidate)| candidate.bytes)
         .map(|(index, _)| index);
     if result.candidates.iter().any(|c| c.artifact.is_some()) {
-        let preview = PathBuf::from(format!("previews/{index}-original.png"));
-        let thumbnail = timings.time(Phase::Preview, || image_backend::preview(&decoded))?;
         let artifact = PathBuf::from(format!("originals/{index}.{}", resource.format));
-        timings.time(Phase::Write, || -> Result<()> {
-            write_artifact(&out.join(&preview), &thumbnail)?;
+        timings.time(Phase::Write, || {
             write_artifact(&out.join(&artifact), original)
         })?;
-        result.original_preview = Some(preview);
         result.original_artifact = Some(artifact);
         result.status = "candidates_available".into();
     }

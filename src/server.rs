@@ -117,6 +117,8 @@ pub(crate) struct App {
     pub control: AnalysisControl,
     /// Set once analysis has finished and the report passed validation.
     pub review: OnceLock<Review>,
+    /// The most recently played animation, parsed once and reused per frame.
+    animation: Mutex<Option<(usize, Arc<crate::svga_render::Renderer>)>>,
     batch_status: Mutex<BatchStatus>,
     batch_cancel: AtomicBool,
     batch_running: AtomicBool,
@@ -130,6 +132,7 @@ impl App {
             live: Mutex::new(Live::default()),
             control: AnalysisControl::default(),
             review: OnceLock::new(),
+            animation: Mutex::new(None),
             batch_status: Mutex::new(BatchStatus::default()),
             batch_cancel: AtomicBool::new(false),
             batch_running: AtomicBool::new(false),
@@ -293,6 +296,12 @@ fn handle(mut request: Request, app: &Arc<App>, session: &Session) {
                 403,
                 "invalid session; open the URL printed by resopt",
             );
+        }
+        if let Some(index) = route.strip_prefix("/source/") {
+            return serve_source(request, app, index);
+        }
+        if let Some(target) = route.strip_prefix("/animation/") {
+            return serve_animation_frame(request, app, target, query);
         }
         return serve_artifact(request, app, route);
     }
@@ -535,6 +544,94 @@ fn artifact_path(route: &str) -> Option<PathBuf> {
         .then(|| Path::new(folder).join(name))
 }
 
+/// The project's own copy of an inventoried image, addressed by report index
+/// only, so images without candidates can still be opened at full size.
+fn serve_source(request: Request, app: &App, index: &str) {
+    let found = index.parse::<usize>().ok().and_then(|index| {
+        let live = app.live.lock().unwrap_or_else(|e| e.into_inner());
+        live.rows
+            .iter()
+            .find(|(row, _)| *row == index)
+            .filter(|(_, analysis)| analysis.resource.kind == "image")
+            .map(|(_, analysis)| {
+                (
+                    analysis.resource.path.clone(),
+                    analysis.resource.format.clone(),
+                )
+            })
+    });
+    let Some((path, format)) = found else {
+        return respond(request, 404, "text/plain", b"Not found".to_vec());
+    };
+    let media = match format.as_str() {
+        "png" => "image/png",
+        "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "heic" | "heif" => "image/heic",
+        _ => "application/octet-stream",
+    };
+    match contained_file(&app.project, &path).and_then(|p| crate::resources::bounded_read(&p)) {
+        Ok(bytes) => respond(request, 200, media, bytes),
+        Err(_) => respond(request, 404, "text/plain", b"Source unavailable".to_vec()),
+    }
+}
+
+/// Largest frame side the player may ask for.
+const MAX_FRAME_SIDE: u32 = 1024;
+
+/// `/animation/<index>/<frame>?side=N`: one rendered frame of an inventoried
+/// SVGA file, addressed by report index. Frames are rendered on demand from
+/// the project's own file, so nothing is written for playback.
+fn serve_animation_frame(request: Request, app: &App, target: &str, query: &str) {
+    let parsed = target.split_once('/').and_then(|(index, frame)| {
+        Some((index.parse::<usize>().ok()?, frame.parse::<usize>().ok()?))
+    });
+    let Some((index, frame)) = parsed else {
+        return respond(request, 404, "text/plain", b"Not found".to_vec());
+    };
+    let side = query
+        .split('&')
+        .find_map(|pair| pair.strip_prefix("side="))
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(512)
+        .clamp(16, MAX_FRAME_SIDE);
+    let rendered = animation_renderer(app, index)
+        .and_then(|renderer| crate::svga_render::encode_png(&renderer.render(frame, side)?));
+    match rendered {
+        // Frames are deterministic for a session, and the player shows each one
+        // right after preloading it, so let the browser keep them briefly.
+        Ok(png) => respond_with(
+            request,
+            200,
+            "image/png",
+            png,
+            &[("Cache-Control", "private, max-age=600")],
+        ),
+        Err(_) => respond(request, 404, "text/plain", b"Frame unavailable".to_vec()),
+    }
+}
+
+fn animation_renderer(app: &App, index: usize) -> Result<Arc<crate::svga_render::Renderer>> {
+    if let Some((cached, renderer)) = &*app.animation.lock().unwrap_or_else(|e| e.into_inner())
+        && *cached == index
+    {
+        return Ok(renderer.clone());
+    }
+    let path = {
+        let live = app.live.lock().unwrap_or_else(|e| e.into_inner());
+        live.rows
+            .iter()
+            .find(|(row, analysis)| *row == index && analysis.resource.format == "svga")
+            .map(|(_, analysis)| analysis.resource.path.clone())
+            .context("not an animation")?
+    };
+    let bytes = crate::resources::bounded_read(&contained_file(&app.project, &path)?)?;
+    let renderer = Arc::new(crate::svga_render::Renderer::new(&bytes)?);
+    *app.animation.lock().unwrap_or_else(|e| e.into_inner()) = Some((index, renderer.clone()));
+    Ok(renderer)
+}
+
 fn serve_artifact(request: Request, app: &App, route: &str) {
     let Some(relative) = artifact_path(route) else {
         return respond(request, 404, "text/plain", b"Not found".to_vec());
@@ -580,6 +677,8 @@ fn respond_with(request: Request, code: u16, media: &str, bytes: Vec<u8>, extra:
         ),
     ]
     .into_iter()
+    // A caller-supplied header replaces the default of the same name.
+    .filter(|(key, _)| !extra.iter().any(|(name, _)| name.eq_ignore_ascii_case(key)))
     .chain(extra.iter().copied())
     {
         if let Ok(header) = Header::from_bytes(key, value) {

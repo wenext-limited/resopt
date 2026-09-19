@@ -20,7 +20,7 @@ function snapshot(root) {
 }
 const before = snapshot(project);
 const out = join(mkdtempSync(join(tmpdir(), 'resopt-e2e-report-')), 'report');
-const server = spawn(binary, ['web', project, '--out', out, '--no-open', '--no-cache', '--webp', '--min-score', '90'], { stdio: ['ignore', 'pipe', 'inherit'] });
+const server = spawn(binary, ['web', project, '--out', out, '--no-open', '--no-cache', '--min-score', '90'], { stdio: ['ignore', 'pipe', 'inherit'] });
 const url = await new Promise((resolve, reject) => { server.stdout.on('data', chunk => { const m = String(chunk).match(/Local web: (\S+)/); if (m) resolve(m[1]); }); server.on('exit', code => reject(new Error(`resopt exited ${code}`))); });
 const browser = await launch();
 const step = async (name, work) => { await work(); console.log(`ok - ${name}`); };
@@ -118,6 +118,22 @@ try {
     await browser.waitFor(`document.querySelector('.compare-wrap img')?.naturalWidth > 0`);
     await browser.screenshot(join(shots, 'compare.png'));
     await click('#compare-close');
+  });
+
+  await step('SVGA rows show a rendered poster and play frame by frame', async () => {
+    await click('[data-mode="all"]');
+    await browser.evaluate(`(() => { const s = document.getElementById('search'); s.value = '.svga'; s.dispatchEvent(new Event('input')); })()`);
+    await browser.waitFor(`document.querySelector('.resource-row .thumb img')?.naturalWidth > 0`);
+    await click('.resource-row');
+    await browser.waitFor(`document.querySelector('.player .canvas img')?.naturalWidth > 0`);
+    assert.match(await text('.facts'), /120 × 96 · 12 fps · 4 frames/);
+    const before = await browser.evaluate(`document.querySelector('.player .canvas img').src`);
+    await click('.player-controls button');
+    await browser.waitFor(`document.querySelector('.player .canvas img').src !== ${JSON.stringify(before)} && /animation\\/\\d+\\/\\d+/.test(document.querySelector('.player .canvas img').src)`);
+    await browser.waitFor(`document.querySelector('.player .canvas img').naturalWidth > 0`);
+    await click('.player-controls button');
+    await browser.screenshot(join(shots, 'svga-player.png'));
+    await browser.evaluate(`(() => { const s = document.getElementById('search'); s.value = ''; s.dispatchEvent(new Event('input')); })()`);
   });
 
   await step('warning candidates need an explicit, separately worded confirmation', async () => {

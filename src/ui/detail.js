@@ -6,7 +6,8 @@ function scoreLabel(score) { return t(score >= 90 ? 'score90' : score >= 70 ? 's
 function drawPreview(r, c, original) {
   const figure = el('figure', 'preview-frame'), caption = el('div', 'preview-label');
   caption.append(el('span', '', original ? t('original') : c ? candidateLabel(c) : t('candidate')));
-  const raw = assetUrl(original ? r.original_artifact : c?.artifact);
+  // Without a staged copy, a live session serves the project's own file by index.
+  const raw = assetUrl(original ? r.original_artifact : c?.artifact) || (original && state.token && r.image ? `source/${indexOf(r)}` : null);
   if (raw) { const link = el('a', '', t('openFull')); link.href = raw; link.target = '_blank'; link.rel = 'noopener'; caption.append(link); }
   const canvas = el('div', 'canvas'); canvas.dataset.background = state.background;
   const src = assetUrl(original ? r.original_preview : c?.preview);
@@ -25,6 +26,7 @@ function candidateStatus(c) {
 }
 
 function renderDetail() {
+  stopPlayback();
   const pane = $('inspector'); pane.replaceChildren();
   const r = state.selected;
   if (!r) { const empty = el('div', 'empty'); empty.append(el('strong', '', t('select')), el('span', '', t('selectHint'))); pane.append(empty); return; }
@@ -39,11 +41,17 @@ function renderDetail() {
     facts.append(el('span', '', `${count(r.image.width)} × ${count(r.image.height)}`), el('span', '', t(r.image.has_transparent_pixels ? 'transparent' : 'opaque')));
     if (r.image.frames > 1) facts.append(el('span', '', t('frames', r.image.frames)));
   }
+  if (r.animation) facts.append(el('span', '', t('animInfo', count(r.animation.width), count(r.animation.height), r.animation.fps, count(r.animation.frames))));
   if (r.media) facts.append(el('span', '', t('mediaInfo', r.media.streams.join(' + '), r.media.duration_seconds?.toFixed(1) ?? '—', r.media.bit_rate ? Math.round(r.media.bit_rate / 1000) : '—')));
   if (r.resource?.extension_mismatch) facts.append(el('span', 'status-warn', t('mismatch')));
   pane.append(facts);
   const android = r.resource?.android;
   if (android) pane.append(el('p', 'android-note', `${t('android')}: ${t('androidInfo', android.area, android.res_type || '—', android.name || '—', android.qualifiers?.length ? android.qualifiers.join('-') : '—')}`));
+  if (r.animation) pane.append(animationPlayer(r));
+  else if (!variants.length && r.original_preview) {
+    // Nothing smaller was produced (or this format has no enabled target): still show the image.
+    const single = el('div', 'comparison single'); single.append(drawPreview(r, null, true)); pane.append(single);
+  }
   if (variants.length) {
     const controls = el('div', 'comparison-controls'), label = el('label', 'candidate-label', t('compareWith')), select = el('select');
     select.id = 'candidate-select'; label.htmlFor = select.id;
@@ -82,6 +90,35 @@ function renderMultiSelection(pane) {
   const block = el('section', 'multi-selection');
   block.append(el('strong', '', t('multiSelected', count(items.length))), el('p', '', t('multiSelectedHint')));
   pane.append(block);
+}
+
+// Frame-by-frame playback of an SVGA file. Frames are rendered by the local
+// server on demand; the offline report shows the poster frame only.
+let playback = null;
+function stopPlayback() { if (playback) { clearTimeout(playback.timer); playback = null; } }
+function animationPlayer(r) {
+  stopPlayback();
+  const info = r.animation, index = indexOf(r), box = el('section', 'player'); box.setAttribute('aria-label', basename(pathText(r)));
+  const canvas = el('div', 'canvas'); canvas.dataset.background = state.background;
+  const img = el('img'); img.alt = `${basename(pathText(r))} — ${t('animFrame', info.poster_frame + 1, info.frames)}`; img.decoding = 'sync';
+  const poster = assetUrl(r.original_preview); if (poster) img.src = poster; canvas.append(img); box.append(canvas);
+  if (!state.token) { box.append(el('p', 'hint', t('animStatic', info.poster_frame + 1))); return box; }
+  const controls = el('div', 'player-controls'), toggle = el('button', '', t('animPlay')), slider = el('input'), label = el('span', 'number');
+  toggle.type = 'button'; slider.type = 'range'; slider.min = '0'; slider.max = String(Math.max(0, info.frames - 1)); slider.value = String(info.poster_frame); slider.setAttribute('aria-label', t('animFrame', '', info.frames));
+  const frameUrl = frame => `animation/${index}/${frame}?side=512`;
+  const show = frame => { slider.value = String(frame); label.textContent = t('animFrame', frame + 1, info.frames); img.src = frameUrl(frame); };
+  const step = () => {
+    if (!playback || playback.index !== index || !img.isConnected) return stopPlayback();
+    const next = (Number(slider.value) + 1) % info.frames, started = performance.now(), loader = new Image();
+    // Wait for the frame before showing it, so playback never flashes empty.
+    loader.onload = loader.onerror = () => { if (!playback || playback.index !== index) return; show(next); playback.timer = setTimeout(step, Math.max(0, 1000 / Math.max(1, info.fps) - (performance.now() - started))); };
+    loader.src = frameUrl(next);
+  };
+  toggle.addEventListener('click', () => { if (playback) { stopPlayback(); toggle.textContent = t('animPlay'); } else { playback = { index, timer: null }; toggle.textContent = t('animPause'); step(); } });
+  slider.addEventListener('input', () => { stopPlayback(); toggle.textContent = t('animPlay'); show(Number(slider.value)); });
+  label.textContent = t('animFrame', info.poster_frame + 1, info.frames);
+  controls.append(toggle, slider, label); box.append(controls);
+  return box;
 }
 
 function duplicateBlock(r, group) {

@@ -32,6 +32,22 @@ for (let i = 0; i < 6; i++) write(`App/Resources/gradient-${i}.png`, png(96 + i 
 for (let i = 0; i < 4; i++) write(`App/Resources/noise-${i}.png`, png(128, 128, noisy));
 write('App/Resources/badge.png', png(96, 96, badge));
 write('App/Other/badge-copy.png', png(96, 96, badge));
+// A minimal SVGA 2.x file: zlib(protobuf MovieEntity) with one bitmap sprite
+// sliding right over four frames.
+function svga() {
+  const varint = n => { const out = []; do { let b = n & 0x7f; n >>>= 7; if (n) b |= 0x80; out.push(b); } while (n); return Buffer.from(out); };
+  const field = (number, payload) => Buffer.concat([varint((number << 3) | 2), varint(payload.length), payload]);
+  const float = (number, value) => { const b = Buffer.alloc(5); b[0] = (number << 3) | 5; b.writeFloatLE(value, 1); return b; };
+  const int = (number, value) => Buffer.concat([varint(number << 3), varint(value)]);
+  const params = Buffer.concat([float(1, 120), float(2, 96), int(3, 12), int(4, 4)]);
+  const image = Buffer.concat([field(1, Buffer.from('badge')), field(2, png(96, 96, badge))]);
+  const frames = [0, 8, 16, 24].map(tx => field(2, Buffer.concat([
+    float(1, 1), field(2, Buffer.concat([float(3, 96), float(4, 96)])), field(3, Buffer.concat([float(1, 1), float(4, 1), float(5, tx)])),
+  ])));
+  const sprite = Buffer.concat([field(1, Buffer.from('badge')), ...frames]);
+  return deflateSync(Buffer.concat([field(1, Buffer.from('2.1.0')), field(2, params), field(3, image), field(4, sprite)]));
+}
+write('App/Resources/badge-slide.svga', svga());
 write('App/Resources/intro.mp3', Buffer.from('ID3 placeholder audio'));
 write('App/Assets.xcassets/Contents.json', '{"info":{"author":"xcode","version":1}}');
 write('App/Assets.xcassets/Hero.imageset/Contents.json', JSON.stringify({ images: [{ filename: 'hero@2x.png', idiom: 'universal', scale: '2x' }, { filename: 'hero@3x.png', idiom: 'universal', scale: '3x' }], info: { author: 'xcode', version: 1 } }));

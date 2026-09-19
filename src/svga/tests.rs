@@ -1,7 +1,7 @@
 mod analysis;
 
 use super::*;
-use std::io::{Read, Write};
+use svga::{Document, Limits, wire};
 
 const SIDE: u32 = 64;
 
@@ -87,18 +87,41 @@ fn images() -> Vec<(&'static str, Vec<u8>)> {
     vec![("img_0", png_image(1)), ("img_1", png_image(2))]
 }
 
+const STORED_BLOCK: usize = 65_535;
+
+/// A zlib stream of stored blocks. Written by hand so malformed payloads,
+/// which the `svga` crate refuses to encode, can be wrapped too.
 fn pack(proto: &[u8]) -> Vec<u8> {
-    let mut encoder = flate2::write::ZlibEncoder::new(Vec::new(), flate2::Compression::fast());
-    encoder.write_all(proto).unwrap();
-    encoder.finish().unwrap()
+    let blocks: Vec<&[u8]> = if proto.is_empty() {
+        vec![proto]
+    } else {
+        proto.chunks(STORED_BLOCK).collect()
+    };
+    let last = blocks.len() - 1;
+    let body = blocks.iter().enumerate().flat_map(|(index, block)| {
+        let length = block.len() as u16;
+        [
+            &[u8::from(index == last)][..],
+            &length.to_le_bytes(),
+            &(!length).to_le_bytes(),
+            block,
+        ]
+        .concat()
+    });
+    let (a, b) = proto.iter().fold((1u32, 0u32), |(a, b), byte| {
+        let a = (a + u32::from(*byte)) % 65_521;
+        (a, (b + a) % 65_521)
+    });
+    let adler = (b << 16) | a;
+    [0x78, 0x01]
+        .into_iter()
+        .chain(body)
+        .chain(adler.to_be_bytes())
+        .collect()
 }
 
 fn unpack(bytes: &[u8]) -> Vec<u8> {
-    let mut proto = Vec::new();
-    flate2::bufread::ZlibDecoder::new(bytes)
-        .read_to_end(&mut proto)
-        .unwrap();
-    proto
+    Document::from_bytes(bytes).unwrap().to_proto()
 }
 
 fn sample() -> Vec<u8> {
@@ -127,21 +150,11 @@ fn optimize_shrinks_verifies_and_keeps_unknown_nested_fields_verbatim() {
     assert!(proto.windows(sprite.len()).any(|window| window == sprite));
     assert!(proto.starts_with(&header()));
     // Both embedded PNGs were replaced by smaller, pixel-identical ones.
-    let (before, after) = (unpack(&original), unpack(&optimized));
-    let (before, after) = (
-        movie::parse(&before).unwrap(),
-        movie::parse(&after).unwrap(),
-    );
-    let values = |parts: &[Part<'_>]| -> Vec<usize> {
-        parts
-            .iter()
-            .filter_map(|part| match part {
-                Part::Image(_, image) => Some(image.value.len()),
-                Part::Verbatim(_) => None,
-            })
-            .collect()
+    let values = |bytes: &[u8]| -> Vec<usize> {
+        let document = Document::from_bytes(bytes).unwrap();
+        document.images().map(|image| image.value().len()).collect()
     };
-    let (before, after) = (values(&before), values(&after));
+    let (before, after) = (values(&original), values(&optimized));
     assert_eq!(before.len(), 2);
     assert!(before.iter().zip(&after).all(|(old, new)| new < old));
 }
@@ -319,14 +332,54 @@ fn malformed_input_is_rejected_without_panicking() {
 
 #[test]
 fn zlib_bombs_stop_at_the_inflated_size_cap() {
-    let bomb = pack(&vec![0; 1024 * 1024]);
+    // Sprites are opaque, so a megabyte of zeros is a valid, compressible movie.
+    let proto = [header(), field(4, &vec![0; 1024 * 1024])].concat();
+    let bomb = Document::from_proto(proto.clone())
+        .unwrap()
+        .to_bytes(Compression::Fast)
+        .unwrap();
     assert!(bomb.len() < 8 * 1024);
+    let capped = |limit| rules::open_with(&bomb, &Limits::default().with_max_inflated_bytes(limit));
+    for limit in [64 * 1024, proto.len() - 1] {
+        assert_eq!(
+            capped(limit).err(),
+            Some(Refusal::Unsupported("svga_inflated_size_exceeds_limit"))
+        );
+    }
+    assert_eq!(capped(proto.len()).unwrap().to_proto(), proto);
+    let tiny = Limits::default().with_max_input_bytes(bomb.len() - 1);
     assert_eq!(
-        container::inflate(&bomb, 64 * 1024),
-        Err(Refusal::Unsupported("svga_inflated_size_exceeds_limit"))
+        rules::open_with(&bomb, &tiny).err(),
+        Some(Refusal::Unsupported("svga_input_exceeds_limit"))
     );
-    assert_eq!(
-        container::inflate(&bomb, 1024 * 1024).unwrap().len(),
-        1024 * 1024
-    );
+}
+
+/// A key that is not valid UTF-8 cannot be addressed by name; entries are
+/// edited by position, so such an image is optimized like any other and the
+/// key bytes survive untouched.
+#[test]
+fn an_image_under_a_non_utf8_key_is_optimized_and_keeps_its_key_bytes() {
+    let odd_key: &[u8] = &[0xff, 0xfe, b'k'];
+    let entry = |key: &[u8], value: &[u8]| field(3, &[field(1, key), field(2, value)].concat());
+    let proto = [
+        header(),
+        entry(odd_key, &png_image(1)),
+        entry(b"img_1", &png_image(2)),
+        sprite(1.0),
+    ]
+    .concat();
+    let original = pack(&proto);
+    let optimized = optimize(&original, &Policy::default()).unwrap();
+    verify(&original, &optimized).unwrap();
+    let read = |bytes: &[u8]| -> Vec<(Vec<u8>, usize)> {
+        Document::from_bytes(bytes)
+            .unwrap()
+            .images()
+            .map(|image| (image.key_bytes().to_vec(), image.value().len()))
+            .collect()
+    };
+    let (before, after) = (read(&original), read(&optimized));
+    assert_eq!(after[0].0, odd_key);
+    assert_eq!(after[1].0, b"img_1");
+    assert!(before.iter().zip(&after).all(|(old, new)| new.1 < old.1));
 }

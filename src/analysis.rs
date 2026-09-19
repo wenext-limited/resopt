@@ -51,7 +51,8 @@ pub struct AnalysisOptions {
     pub png_level: u8,
     /// Allow lossless PNG color-type, bit-depth and palette reductions.
     pub png_reductions: bool,
-    /// Include WebP candidates for loose files and Android resources.
+    /// Compare WebP candidates for loose files and Android resources. On by
+    /// default; asset-catalog renditions never receive WebP.
     pub webp: bool,
     /// Overrides the `minSdk` detected from Gradle files.
     pub android_min_sdk: Option<u32>,
@@ -73,7 +74,7 @@ impl Default for AnalysisOptions {
             max_pixels: image_backend::DEFAULT_MAX_PIXELS,
             png_level: Policy::default().png_level,
             png_reductions: false,
-            webp: false,
+            webp: true,
             android_min_sdk: None,
             cache_dir: None,
         }
@@ -203,6 +204,9 @@ pub struct ResourceAnalysis {
     /// Codec, duration and bitrate of audio/video files, when ffprobe is installed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media: Option<crate::media::MediaInfo>,
+    /// Canvas, timing and size of an animation, when it could be parsed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub animation: Option<AnimationInfo>,
     /// Scale-invariant fingerprint used to find duplicate and resized images.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fingerprint: Option<crate::similarity::Fingerprint>,
@@ -222,6 +226,7 @@ impl ResourceAnalysis {
             original_artifact: None,
             fingerprint: None,
             media: None,
+            animation: None,
         }
     }
 
@@ -231,6 +236,16 @@ impl ResourceAnalysis {
             .filter(|c| c.valid && c.artifact.is_some())
             .map_or(0, |c| c.savings_bytes)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct AnimationInfo {
+    pub width: u32,
+    pub height: u32,
+    pub fps: u32,
+    pub frames: usize,
+    /// Frame shown as the thumbnail.
+    pub poster_frame: usize,
 }
 
 #[derive(Debug, Serialize, Deserialize)]

@@ -1,5 +1,23 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **SVGA previews and playback.** SVGA files now render: every SVGA row gets a poster thumbnail plus its canvas size, frame rate and frame count, and a live session plays the animation frame by frame with a scrubber. Rendering follows the reference players (bitmap sprites, transforms, clip paths, matte layers, vector shapes and `keep` frames). A file that cannot be rendered is still optimized; the row says why there is no picture.
+
+### Changed
+- SVGA optimization now runs on the published [`svga`](https://crates.io/crates/svga) crate, extracted from resopt's own implementation. Results on real files are byte-for-byte unchanged. Embedded images are edited by position (svga 0.1.1), so an image stored under a key that is not valid UTF-8 is optimized too.
+- WebP candidates are compared by default for loose files and Android resources; pass `--no-webp` to skip them. `--webp` is still accepted and has no effect.
+
+## 0.6.1 · 2026-09-19
+
+### Fixed
+- Images without a smaller candidate (already-optimal PNGs, and WebP files when `--webp` is off) had no thumbnail or preview. Every decoded image now gets a preview, and a live session can open the project's own file at full size.
+- Such images now say why nothing was proposed ("WebP candidates are off for this run…") and are labelled "No smaller candidate" instead of "Already optimal".
+
+### Changed
+- Interface language follows the browser's preference order, with an explicit "Auto" choice in the selector.
+
 ## 0.6.0 · 2026-09-19
 
 ### Added

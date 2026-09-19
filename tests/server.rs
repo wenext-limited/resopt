@@ -344,8 +344,14 @@ fn web_analyzes_local_project_without_uploads_and_serves_review() {
             .iter()
             .any(|c| c["format"] == "png" && c["artifact"].is_string() && c["sha256"].is_string())
     );
+    // Without ImageIO only the bundled codecs produce candidates.
     #[cfg(not(target_os = "macos"))]
-    assert!(candidates.iter().all(|c| c["format"] == "png"));
+    assert!(
+        candidates
+            .iter()
+            .all(|c| c["format"] == "png" || c["format"] == "webp")
+    );
+    assert!(candidates.iter().any(|c| c["format"] == "webp"));
     assert_eq!(fs::read(root.join("image.png")).unwrap(), original);
     let capabilities = body_of(&request(address, "GET", "/api/capabilities", &session, ""));
     assert_eq!(
@@ -381,6 +387,40 @@ fn web_analyzes_local_project_without_uploads_and_serves_review() {
     let artifact = candidates.iter().find(|c| c["format"] == "png").unwrap()["artifact"]
         .as_str()
         .unwrap();
+    // The project's own image is reachable by report index only, with the cookie.
+    assert!(request(address, "GET", "/source/0", "", "").starts_with("HTTP/1.1 403"));
+    let source = request(address, "GET", "/source/0", &cookie, "");
+    assert!(source.starts_with("HTTP/1.1 200"), "{source}");
+    assert!(
+        source
+            .to_ascii_lowercase()
+            .contains("content-type: image/png")
+    );
+    for route in [
+        "/source/999",
+        "/source/../image.png",
+        "/source/0/../../x",
+        "/source/",
+    ] {
+        assert!(
+            request(address, "GET", route, &cookie, "").starts_with("HTTP/1.1 404"),
+            "{route}"
+        );
+    }
+    // Animation frames exist only for SVGA rows, by index, behind the cookie.
+    assert!(request(address, "GET", "/animation/0/0", "", "").starts_with("HTTP/1.1 403"));
+    for route in [
+        "/animation/0/0",
+        "/animation/999/0",
+        "/animation/0",
+        "/animation/a/b",
+        "/animation/0/0/../x",
+    ] {
+        assert!(
+            request(address, "GET", route, &cookie, "").starts_with("HTTP/1.1 404"),
+            "{route}"
+        );
+    }
     // Artifacts need the session cookie: knowing the port is not enough.
     assert!(request(address, "GET", &format!("/{artifact}"), "", "").starts_with("HTTP/1.1 403"));
     let stolen = format!(

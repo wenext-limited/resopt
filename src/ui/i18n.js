@@ -3,7 +3,7 @@
 const MESSAGES = {
   en: {
     title: 'Resource analysis', live: 'Local session · changes need your confirmation', offline: 'Offline report · read-only',
-    theme: 'Theme', themeSystem: 'System', themeLight: 'Light', themeDark: 'Dark', language: 'Language', json: 'View JSON ↗',
+    theme: 'Theme', languageAuto: 'Auto', themeSystem: 'System', themeLight: 'Light', themeDark: 'Dark', language: 'Language', json: 'View JSON ↗',
     scanning: 'Scanning the project and Git ignore rules…', analyzing: 'Analyzed {0} of {1} resources', cancel: 'Stop analysis',
     cancelling: 'Stopping after the files in progress…', cancelled: 'Analysis was stopped early. Unfinished resources are listed as “Not analyzed”. Run resopt web again to continue; with the cache enabled (the default), finished work is reused.',
     failed: 'Analysis failed: {0}', failedAction: 'Fix the cause shown above, then run resopt web again. No project files were changed.',
@@ -54,21 +54,24 @@ const MESSAGES = {
     methodology2: 'Animated images are never flattened. Savings are source-file bytes, not compiled app size.', footerUnits: 'Sizes use binary units (KiB = 1,024 bytes); hover for exact bytes.', footerScope: 'Source savings only · not app download size',
     dup_identical: 'Identical files', dup_resized: 'Same picture at different sizes', dup_similar: 'Near-duplicate pictures', dupRedundant: '{0} files · {1} beyond the largest copy',
     dupHint: 'Found by comparing decoded pixels, not names. Scale variants of one asset (@2x/@3x, density folders) are not reported. Removing a copy means updating the code that uses it, so nothing is merged automatically.',
+    animInfo: '{0} × {1} · {2} fps · {3} frames', animPlay: 'Play', animPause: 'Pause', animFrame: 'Frame {0} of {1}', animStatic: 'Poster frame {0}. Open this report with resopt serve to play the animation.',
     android: 'Android', androidInfo: '{0}/{1} · name “{2}” · qualifiers {3}', notes: 'Notes', perf: 'Analysis took {0} s ({1} workers, {2} cache hits, {3} duplicates reused)',
     capabilityTitle: 'Available on this computer', tool_missing: '{0} not found — {1} Install: {2}',
     kind_image: 'Image', kind_vector: 'Vector', kind_video: 'Video', kind_audio: 'Audio', kind_animation: 'Animation', kind_font: 'Font', kind_archive: 'Archive', kind_localization: 'Localization', kind_data: 'Data', kind_unclassified: 'Other',
-    status_candidates_available: 'Smaller candidate', status_inspected: 'Already optimal', status_excluded: 'Excluded', status_unsupported: 'No optimizer', status_inventory_only: 'No optimizer', status_failed: 'Analysis failed', status_not_analyzed: 'Not analyzed',
+    status_candidates_available: 'Smaller candidate', status_inspected: 'No smaller candidate', status_excluded: 'Excluded', status_unsupported: 'No optimizer', status_inventory_only: 'No optimizer', status_failed: 'Analysis failed', status_not_analyzed: 'Not analyzed',
     transparent: 'has transparency', opaque: 'opaque', frames: '{0} frames', mismatch: 'extension does not match content',
     issue_android_nine_patch: 'Nine-patch: stays PNG so AAPT can read its stretch markers; lossless optimization only', issue_android_launcher_icon: 'Launcher icon: keeps its format; lossless optimization only', issue_android_raw_resource: 'res/raw file: read as raw bytes by app code, so the format is kept',
     issue_android_min_sdk_unknown: 'minSdk could not be read from Gradle files; pass --android-min-sdk to enable WebP candidates', issue_app_icon: 'App icon: kept as is', issue_resizing: 'Resizable (sliced) image: kept as is',
     issue_multiple_frames_not_transcoded: 'Animated image: inspected only, never flattened', issue_below_explicit_input_threshold: 'Below the configured input size', issue_source_changed_during_analysis: 'The file changed while it was being analyzed; run the analysis again',
     issue_decoded_image_exceeds_max_pixels: 'Larger than the pixel limit (raise it with --max-pixels)', issue_dimensions_changed: 'Dimensions changed', issue_orientation_changed: 'Orientation changed', issue_no_smaller_candidate: 'No smaller candidate was produced', issue_failed_verification: 'This candidate failed verification and cannot be applied',
     issue_ffprobe_not_installed: 'Install ffmpeg to see codec, duration and bitrate for this file', mediaInfo: '{0} · {1} s · {2} kbit/s',
+    issue_webp_candidates_disabled: 'WebP candidates were turned off for this run (--no-webp)',
+    issue_preview_unavailable: 'This animation could not be rendered for preview ({0}); optimization is verified on its bytes and is unaffected',
     issue_backend: 'Listed in the inventory; resopt has no optimizer for this type yet', issue_macos: 'Decoding this format needs Apple ImageIO (macOS)', issue_min_sdk: 'WebP here needs API {1}+, but minSdk is {0}', issue_metadata: 'Not carried into the new file: {0}',
   },
   'zh-CN': {
     title: '资源分析', live: '本地会话 · 修改需逐项确认', offline: '离线报告 · 仅供审阅',
-    theme: '主题', themeSystem: '跟随系统', themeLight: '浅色', themeDark: '深色', language: '语言', json: '查看 JSON ↗',
+    theme: '主题', languageAuto: '自动', themeSystem: '跟随系统', themeLight: '浅色', themeDark: '深色', language: '语言', json: '查看 JSON ↗',
     scanning: '正在扫描目录与 Git 忽略规则…', analyzing: '已分析 {0} / {1} 个资源', cancel: '停止分析',
     cancelling: '处理完当前文件后停止…', cancelled: '分析已提前停止，未完成的资源标记为“未分析”。再次运行 resopt web 可继续；缓存开启时（默认）会复用已完成的结果。',
     failed: '分析失败：{0}', failedAction: '请处理上述原因后重新运行 resopt web。项目文件未被修改。',
@@ -119,23 +122,33 @@ const MESSAGES = {
     methodology2: '动图不会被压成单帧。节省量指源文件字节数，不是编译后的 App 体积。', footerUnits: '体积采用二进制单位（1 KiB = 1,024 字节），悬停可查看精确字节数。', footerScope: '仅统计源文件收益 · 不等于 App 下载体积',
     dup_identical: '完全相同的文件', dup_resized: '同一张图片的不同尺寸', dup_similar: '近似重复的图片', dupRedundant: '{0} 个文件 · 除最大的一份外共 {1}',
     dupHint: '通过比较解码后的像素发现，与文件名无关。同一资源的倍率变体（@2x/@3x、密度目录）不会列出。删除副本需要同步修改引用它的代码，因此不会自动合并。',
+    animInfo: '{0} × {1} · {2} fps · {3} 帧', animPlay: '播放', animPause: '暂停', animFrame: '第 {0} / {1} 帧', animStatic: '封面为第 {0} 帧。使用 resopt serve 打开此报告即可播放动画。',
     android: 'Android', androidInfo: '{0}/{1} · 名称“{2}” · 限定符 {3}', notes: '说明', perf: '分析耗时 {0} 秒（{1} 个线程，缓存命中 {2}，复用重复文件 {3}）',
     capabilityTitle: '本机可用能力', tool_missing: '未找到 {0} — {1} 安装方式：{2}',
     kind_image: '图片', kind_vector: '矢量图', kind_video: '视频', kind_audio: '音频', kind_animation: '动效', kind_font: '字体', kind_archive: '压缩包', kind_localization: '本地化', kind_data: '数据文件', kind_unclassified: '其他',
-    status_candidates_available: '有更小候选', status_inspected: '已是最优', status_excluded: '已排除', status_unsupported: '暂无优化器', status_inventory_only: '暂无优化器', status_failed: '分析失败', status_not_analyzed: '未分析',
+    status_candidates_available: '有更小候选', status_inspected: '没有更小的候选', status_excluded: '已排除', status_unsupported: '暂无优化器', status_inventory_only: '暂无优化器', status_failed: '分析失败', status_not_analyzed: '未分析',
     transparent: '含透明像素', opaque: '不透明', frames: '{0} 帧', mismatch: '扩展名与实际格式不一致',
     issue_android_nine_patch: 'Nine-patch：保持 PNG 以便 AAPT 读取拉伸标记，仅做无损优化', issue_android_launcher_icon: '启动图标：保持原格式，仅做无损优化', issue_android_raw_resource: 'res/raw 文件：应用按原始字节读取，保持原格式',
     issue_android_min_sdk_unknown: '无法从 Gradle 文件读取 minSdk；使用 --android-min-sdk 指定后可生成 WebP 候选', issue_app_icon: 'AppIcon：保持原样', issue_resizing: '拉伸（切片）图片：保持原样',
     issue_multiple_frames_not_transcoded: '动图：仅检测，不会压成单帧', issue_below_explicit_input_threshold: '低于指定的输入体积', issue_source_changed_during_analysis: '分析期间文件发生变化，请重新分析',
     issue_decoded_image_exceeds_max_pixels: '超过像素上限（可用 --max-pixels 调整）', issue_dimensions_changed: '尺寸改变', issue_orientation_changed: '方向改变', issue_no_smaller_candidate: '没有生成更小的候选', issue_failed_verification: '该候选未通过校验，无法应用',
     issue_ffprobe_not_installed: '安装 ffmpeg 后可查看此文件的编码、时长与码率', mediaInfo: '{0} · {1} 秒 · {2} kbit/s',
+    issue_webp_candidates_disabled: '本次运行已关闭 WebP 候选（--no-webp）',
+    issue_preview_unavailable: '无法渲染此动画的预览（{0}）；优化按字节校验，不受影响',
     issue_backend: '已纳入清单；resopt 暂无此类型的优化器', issue_macos: '解码此格式需要 Apple ImageIO（macOS）', issue_min_sdk: '此处使用 WebP 需要 API {1}+，但 minSdk 为 {0}', issue_metadata: '不会带入新文件：{0}',
   },
 };
 
+// An explicit choice wins; otherwise the first supported language in the
+// browser's preference order decides (so "en, zh" stays English).
 function pickLocale(stored, browserLanguages) {
   if (stored === 'en' || stored === 'zh-CN') return stored;
-  return (browserLanguages || []).some(l => String(l).toLowerCase().startsWith('zh')) ? 'zh-CN' : 'en';
+  for (const language of browserLanguages || []) {
+    const tag = String(language).toLowerCase();
+    if (tag.startsWith('zh')) return 'zh-CN';
+    if (tag.startsWith('en')) return 'en';
+  }
+  return 'en';
 }
 
 function translate(locale, key, args) {
@@ -152,6 +165,8 @@ function issueText(locale, reason) {
   if (text.endsWith('_decoding_requires_macos_imageio')) return translate(locale, 'issue_macos');
   const sdk = text.match(/^android_min_sdk_(\d+)_below_webp_requirement_(\d+)$/);
   if (sdk) return translate(locale, 'issue_min_sdk', [sdk[1], sdk[2]]);
+  const preview = text.match(/^preview_unavailable: (.+)$/);
+  if (preview) return translate(locale, 'issue_preview_unavailable', [preview[1]]);
   const metadata = text.match(/^metadata_not_carried_over: (.+)$/);
   if (metadata) return translate(locale, 'issue_metadata', [metadata[1]]);
   return text;

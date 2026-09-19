@@ -298,8 +298,9 @@ function start() {
   $('theme').value = ['light', 'dark', 'system'].includes(readStored('resopt-theme')) ? readStored('resopt-theme') : 'system';
   $('theme').addEventListener('change', () => { applyTheme(); store('resopt-theme', $('theme').value); });
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', applyTheme); applyTheme();
-  $('language').value = locale;
-  $('language').addEventListener('change', () => { locale = $('language').value; store('resopt-language', locale); applyStaticText(); renderStatus(); refresh(false); renderDetail(); });
+  const browserLanguages = navigator.languages?.length ? navigator.languages : [navigator.language];
+  $('language').value = ['en', 'zh-CN'].includes(readStored('resopt-language')) ? readStored('resopt-language') : 'auto';
+  $('language').addEventListener('change', () => { const choice = $('language').value; store('resopt-language', choice); locale = pickLocale(choice, browserLanguages); applyStaticText(); renderStatus(); refresh(false); renderDetail(); });
   applyStaticText();
   for (const id of ['search', 'format-filter', 'sort']) $(id).addEventListener(id === 'search' ? 'input' : 'change', () => refresh(true));
   document.querySelectorAll('.mode').forEach(b => b.addEventListener('click', () => { state.mode = b.dataset.mode; refresh(true); }));

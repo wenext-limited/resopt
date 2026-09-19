@@ -48,6 +48,8 @@ pub use similarity::{Fingerprint, SimilarGroup};
 #[cfg(feature = "native")]
 mod svga;
 #[cfg(feature = "native")]
+mod svga_render;
+#[cfg(feature = "native")]
 mod timings;
 #[cfg(feature = "native")]
 mod tools;
@@ -81,7 +83,7 @@ mod resources;
 mod scan_options;
 #[cfg(feature = "native")]
 pub use analysis::{
-    AnalysisControl, AnalysisOptions, AnalysisReport, ImageCandidate, Performance,
+    AnalysisControl, AnalysisOptions, AnalysisReport, AnimationInfo, ImageCandidate, Performance,
     ResourceAnalysis, analyze, analyze_with_progress,
 };
 pub use image_backend::{

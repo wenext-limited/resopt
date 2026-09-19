@@ -12,7 +12,7 @@ Your files never leave your computer. Analysis never modifies your project.
 - **See results while analysis runs.** Completed files appear immediately, largest first. Stop at any time; finished work is cached, so the next run continues where you left off.
 - **Optimize PNG without changing a pixel.** Decoded samples (including color under transparent pixels) and metadata chunks are verified before a candidate is offered.
 - **Compare JPEG, HEIC and WebP candidates** at the encoder quality levels you choose (75, 85 and 95 by default), including same-format recompression of existing JPEG and WebP files. Lossless WebP candidates are verified sample-for-sample.
-- **Optimize SVGA animations losslessly.** Embedded images are recompressed; every other byte of the animation and every pixel is verified unchanged.
+- **Optimize and preview SVGA animations.** Embedded images are recompressed losslessly; every other byte of the animation and every pixel is verified unchanged. SVGA files are rendered, so you see a thumbnail and can play the animation frame by frame in the review page.
 - **Judge quality with evidence.** Side-by-side previews, a full-size comparison slider, SSIMULACRA2 perceptual scores, and RGB and Alpha error for every candidate.
 - **Decide on warnings yourself.** Candidates below the perceptual-score or Alpha thresholds are kept, clearly marked, and excluded from recommended totals. You can accept one after reviewing it; your approval is recorded. Corrupt files, changed dimensions, stale files and protected resources can never be approved through.
 - **Apply safely, one file or many.** Preview exactly which files change, confirm, and restore any time — even after restarting resopt. Batch apply takes an explicit policy, reports each file's outcome, can be stopped midway, and "Restore all" undoes everything. Files you edited after analysis are never overwritten.
@@ -73,7 +73,7 @@ resopt serve /path/to/report
 ### Useful options
 
 ```sh
-resopt web . --webp                     # also compare WebP (loose files and Android resources)
+resopt web . --no-webp                  # skip WebP candidates (on by default for loose files and Android)
 resopt web . --png-reductions           # allow lossless PNG palette/bit-depth reductions
 resopt web . --qualities 85             # one quality level for a faster first pass
 resopt web . --min-score 90             # stricter perceptual threshold (default 80)
@@ -126,7 +126,7 @@ resopt package-diff before.apk after.apk      # also .aab, .ipa or any zip
 | Project inventory, Git ignore rules, duplicate detection | Yes | Yes |
 | PNG lossless optimization | Yes | Yes |
 | SVGA lossless optimization | Yes | Yes |
-| WebP candidates (`--webp`), lossy and lossless | Yes | Yes¹ |
+| WebP candidates, lossy and lossless (on by default; `--no-webp` to skip) | Yes | Yes¹ |
 | JPEG and HEIC candidates; decoding JPEG/HEIC/GIF/TIFF inputs | Yes (Apple ImageIO) | No |
 | Local review page, apply, batch, restore | Yes | Yes |
 | AAPT2 validation (optional Android SDK), `ffprobe` media details (optional) | Yes | Yes |
@@ -145,7 +145,7 @@ A browser-only edition (static site, WebAssembly) optimizes individual PNG files
 - App icons, sliced (resizable) catalog images and animated images are inspected but never converted. Animated images are never flattened.
 - WebP is not offered for asset-catalog renditions.
 - Reference migration covers statically resolvable references. Names built at runtime, third-party decoders and references outside the scanned directory need your review; ambiguous references block the change instead of guessing.
-- SVGA 1.x (zip) files, and SVGA files containing audio or unknown fields, are reported as unsupported rather than rewritten.
+- SVGA 1.x (zip) files, and SVGA files containing audio or unknown fields, are reported as unsupported rather than rewritten (they are still previewed). SVGA playback draws bitmaps, shapes, clip paths and mattes; dynamic text/images set by app code at runtime and JPEG-encoded embedded images are not drawn.
 - SVG, PDF, audio, video, fonts and archives are inventoried but not optimized. No lossy audio/video transcoding is performed.
 - HEIC candidates cannot be displayed by most browsers; the comparison uses a PNG preview and links the file so you can open it in Preview or Safari.
 

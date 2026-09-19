@@ -327,3 +327,62 @@ fn duplicates_under_a_tight_pixel_budget_never_deadlock() {
         assert_eq!(finished, Ok(24));
     }
 }
+
+/// Regression: images without a smaller candidate had no preview at all, so
+/// already-optimal PNGs and WebP files (without --webp) could not be viewed.
+#[test]
+fn every_decoded_image_gets_a_preview_even_without_candidates() {
+    let base = tempfile::tempdir().unwrap();
+    let project = base.path().join("project");
+    // Already optimal: a second pass finds nothing smaller.
+    let first = base.path().join("first");
+    write(&project, "app/src/main/res/drawable/once.png", &png(40));
+    let report = analyze(
+        &project,
+        &first,
+        AnalysisOptions {
+            jobs: 1,
+            // The case being tested: nothing smaller is produced for these files.
+            webp: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let artifact = report.resources[0].candidates[0].artifact.clone().unwrap();
+    let optimal = fs::read(first.join(artifact)).unwrap();
+    write(&project, "app/src/main/res/drawable/once.png", &optimal);
+    let webp = webp::Encoder::from_rgba(&[120; 32 * 32 * 4], 32, 32)
+        .encode_simple(false, 80.0)
+        .unwrap();
+    write(&project, "app/src/main/res/drawable/photo.webp", &webp);
+
+    let out = base.path().join("second");
+    let report = analyze(
+        &project,
+        &out,
+        AnalysisOptions {
+            jobs: 1,
+            // The case being tested: nothing smaller is produced for these files.
+            webp: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    assert_eq!(report.resources.len(), 2);
+    for resource in &report.resources {
+        assert_eq!(resource.status, "inspected", "{:?}", resource.resource.path);
+        assert!(resource.candidates.iter().all(|c| c.artifact.is_none()));
+        let preview = resource
+            .original_preview
+            .as_ref()
+            .expect("preview for every decoded image");
+        assert!(fs::read(out.join(preview)).unwrap().starts_with(b"\x89PNG"));
+        // Nothing smaller exists, so the source is not duplicated into the report.
+        assert_eq!(resource.original_artifact, None);
+        assert!(
+            resource
+                .issues
+                .contains(&"webp_candidates_disabled".to_string())
+        );
+    }
+}

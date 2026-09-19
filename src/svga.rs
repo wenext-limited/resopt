@@ -1,13 +1,11 @@
 //! Verified lossless optimization of SVGA 2.x animations.
 //!
-//! The protobuf payload is rewritten at wire level: every field is copied
-//! byte for byte except embedded PNG values, which go through the lossless PNG
-//! optimizer, and the result is recompressed as one zlib stream. Anything
+//! The `svga` crate keeps every protobuf field as its stored bytes, so the
+//! payload is copied byte for byte except embedded PNG values, which go through
+//! the lossless PNG optimizer, and recompressed as one zlib stream. Anything
 //! outside that known-safe subset (SVGA 1.x zip, audio, unknown fields,
 //! animated or non-PNG images) is refused instead of rewritten.
-mod container;
-mod movie;
-mod wire;
+mod rules;
 
 #[cfg(test)]
 mod tests;
@@ -20,36 +18,12 @@ use crate::{
     timings::Phase,
 };
 use anyhow::{Result, bail, ensure};
-use movie::{Part, ValueKind};
-use std::{fmt, path::PathBuf};
+use rules::IMAGES;
+pub(crate) use rules::Refusal;
+use std::path::PathBuf;
+use svga::{Compression, ValueKind};
 
-const MAX_INPUT: usize = optimizer::MAX_INPUT;
-const MAX_INFLATED: usize = 256 * 1024 * 1024;
 const CANCELLED: &str = "svga_analysis_cancelled";
-
-/// Why a file is left alone. The reason is a stable machine-readable code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Refusal {
-    /// A valid animation outside the subset that can be rewritten safely.
-    Unsupported(&'static str),
-    Malformed(&'static str),
-}
-
-impl fmt::Display for Refusal {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let (Refusal::Unsupported(reason) | Refusal::Malformed(reason)) = self;
-        formatter.write_str(reason)
-    }
-}
-
-impl std::error::Error for Refusal {}
-
-fn inflate(bytes: &[u8]) -> Result<Vec<u8>, Refusal> {
-    if bytes.len() > MAX_INPUT {
-        return Err(Refusal::Unsupported("svga_input_exceeds_limit"));
-    }
-    container::inflate(bytes, MAX_INFLATED)
-}
 
 struct Optimized {
     bytes: Vec<u8>,
@@ -65,27 +39,31 @@ pub(crate) fn optimize(original: &[u8], png: &Policy) -> Result<Vec<u8>> {
 }
 
 fn optimize_with(original: &[u8], png: &Policy, cancelled: &dyn Fn() -> bool) -> Result<Optimized> {
-    let proto = inflate(original)?;
-    let parts = movie::parse(&proto)?;
-    let mut rebuilt = Vec::with_capacity(proto.len());
+    let document = rules::open(original)?;
+    let mut edited = document.clone();
     let (mut images, mut images_optimized) = (0, 0);
-    for part in &parts {
+    // Entries are addressed by position, which also reaches keys that are not
+    // valid UTF-8. Replacing a value never moves an entry, so positions in
+    // `document` stay valid for `edited`.
+    for (position, image) in document.images().enumerate() {
         ensure!(!cancelled(), CANCELLED);
-        let smaller = match part {
-            Part::Image(_, image) if image.kind == ValueKind::Png => {
-                images += 1;
-                // A PNG the optimizer cannot handle stays as it is.
-                optimizer::optimize(image.value, png)
-                    .ok()
-                    .filter(|candidate| candidate.len() < image.value.len())
-                    .map(|candidate| movie::with_value(image, &candidate))
-            }
-            _ => None,
-        };
-        images_optimized += usize::from(smaller.is_some());
-        rebuilt.extend_from_slice(smaller.as_deref().unwrap_or(part.field().raw));
+        if image.kind() != ValueKind::Png {
+            continue;
+        }
+        images += 1;
+        // A PNG the optimizer cannot handle stays as it is.
+        let smaller = optimizer::optimize(image.value(), png)
+            .ok()
+            .filter(|candidate| candidate.len() < image.value().len());
+        if let Some(candidate) = smaller {
+            edited = edited
+                .replace_image_at(position, &candidate)
+                .map_err(Refusal::from)?;
+            images_optimized += 1;
+        }
     }
-    let candidate = container::deflate(&rebuilt)?;
+    ensure!(!cancelled(), CANCELLED);
+    let candidate = edited.to_bytes(Compression::Best).map_err(Refusal::from)?;
     let bytes = if candidate.len() < original.len() {
         candidate
     } else {
@@ -102,32 +80,34 @@ fn optimize_with(original: &[u8], png: &Policy, cancelled: &dyn Fn() -> bool) ->
 /// non-image field and image key byte-identical, and every rewritten value a
 /// PNG with identical pixels and ancillary chunks.
 pub(crate) fn verify(original: &[u8], candidate: &[u8]) -> Result<()> {
-    let (before_proto, after_proto) = (inflate(original)?, inflate(candidate)?);
-    let (before, after) = (movie::parse(&before_proto)?, movie::parse(&after_proto)?);
+    let (before, after) = (rules::open(original)?, rules::open(candidate)?);
     ensure!(
-        before.len() == after.len(),
+        before.fields().count() == after.fields().count(),
         "svga_verify_field_count_changed"
     );
-    for (old, new) in before.iter().zip(&after) {
-        match (old, new) {
-            (Part::Verbatim(old), Part::Verbatim(new)) => {
-                ensure!(old.raw == new.raw, "svga_verify_field_changed");
-            }
-            (Part::Image(_, old), Part::Image(_, new)) => {
+    let (mut old_images, mut new_images) = (before.images(), after.images());
+    for (old, new) in before.fields().zip(after.fields()) {
+        match (old.number == IMAGES, new.number == IMAGES) {
+            (false, false) => ensure!(old.raw == new.raw, "svga_verify_field_changed"),
+            (true, true) => {
+                let (Some(old), Some(new)) = (old_images.next(), new_images.next()) else {
+                    bail!("svga_verify_field_order_changed");
+                };
                 ensure!(
-                    old.key == new.key && movie::entry_order(old) == movie::entry_order(new),
+                    old.key_bytes() == new.key_bytes()
+                        && old.field_numbers() == new.field_numbers(),
                     "svga_verify_image_key_changed"
                 );
-                if old.value == new.value {
+                if old.value() == new.value() {
                     continue;
                 }
                 ensure!(
-                    old.kind == ValueKind::Png && new.kind == ValueKind::Png,
+                    old.kind() == ValueKind::Png && new.kind() == ValueKind::Png,
                     "svga_verify_image_value_changed"
                 );
                 // Strict first; a lossless reduction may rewrite IHDR/PLTE/tRNS.
-                let same = optimizer::verify(old.value, new.value, false)
-                    .or_else(|_| optimizer::verify(old.value, new.value, true));
+                let same = optimizer::verify(old.value(), new.value(), false)
+                    .or_else(|_| optimizer::verify(old.value(), new.value(), true));
                 ensure!(same.is_ok(), "svga_verify_image_pixels_changed");
             }
             _ => bail!("svga_verify_field_order_changed"),
@@ -176,10 +156,7 @@ fn analyze_into(
         ..
     } = context;
     // Refusals are reported even when no optimization is attempted.
-    timings.time(Phase::Decode, || -> Result<()> {
-        movie::parse(&inflate(original)?)?;
-        Ok(())
-    })?;
+    timings.time(Phase::Decode, || rules::open(original).map(drop))?;
     if let Some(reason) = &resource.conversion_exclusion {
         result.status = "excluded".into();
         result.issues.push(reason.clone());

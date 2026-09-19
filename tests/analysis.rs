@@ -453,7 +453,7 @@ fn identical_images_reuse_immutable_candidates_but_keep_project_paths() {
 }
 
 #[test]
-fn webp_is_opt_in_and_android_nine_patch_is_not_transcoded() {
+fn webp_can_be_turned_off_and_android_nine_patch_is_not_transcoded() {
     let base = tempfile::tempdir().unwrap();
     let input = base.path().join("project");
     write(&input, "a.png", &png(128));
@@ -584,6 +584,7 @@ fn webp_is_opt_in_and_android_nine_patch_is_not_transcoded() {
         &input,
         base.path().join("plain"),
         AnalysisOptions {
+            webp: false,
             qualities: vec![85],
             ..Default::default()
         },

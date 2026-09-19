@@ -160,6 +160,11 @@ test('every translation key used by the UI exists', () => {
 
 test('locale selection and issue sentences', () => {
   assert.equal(api.pickLocale(null, ['zh-TW', 'en']), 'zh-CN');
+  // Preference order decides; an explicit or cleared ("auto") choice behaves as expected.
+  assert.equal(api.pickLocale(null, ['en-US', 'zh-CN']), 'en');
+  assert.equal(api.pickLocale('auto', ['zh-Hans-CN']), 'zh-CN');
+  assert.equal(api.pickLocale('zh-CN', ['en-US']), 'zh-CN');
+  assert.equal(api.pickLocale(null, []), 'en');
   assert.equal(api.pickLocale(null, ['fr-FR']), 'en');
   assert.equal(api.pickLocale('en', ['zh-CN']), 'en');
   assert.equal(api.translate('en', 'analyzing', [3, 10]), 'Analyzed 3 of 10 resources');
