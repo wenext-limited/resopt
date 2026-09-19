@@ -68,4 +68,21 @@ function blockedReason(resource, candidate) {
   return '';
 }
 
+// Amplified per-pixel difference of two straight-RGBA buffers of equal size.
+// Colour is compared premultiplied, so invisible colour under alpha 0 does not
+// count; an alpha difference is added to every channel. `max` is the largest
+// unamplified difference (0-255) and `changed` the number of differing pixels.
+function differencePixels(a, b, gain) {
+  const pixels = new Uint8ClampedArray(a.length); let max = 0, changed = 0;
+  for (let i = 0; i < a.length; i += 4) {
+    const alphaA = a[i + 3] / 255, alphaB = b[i + 3] / 255, alpha = Math.abs(a[i + 3] - b[i + 3]); let worst = alpha;
+    for (let c = 0; c < 3; c++) {
+      const colour = Math.abs(a[i + c] * alphaA - b[i + c] * alphaB); worst = Math.max(worst, colour);
+      pixels[i + c] = (colour + alpha) * gain;
+    }
+    pixels[i + 3] = 255; max = Math.max(max, worst); if (worst >= 0.5) changed++;
+  }
+  return { pixels, max: Math.round(max), changed };
+}
+
 function displayableInBrowser(format) { return BROWSER_FORMATS.includes(format); }

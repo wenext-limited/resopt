@@ -87,6 +87,7 @@ fn script() -> String {
         include_str!("ui/core.js"),
         include_str!("ui/i18n.js"),
         include_str!("ui/app.js"),
+        include_str!("ui/compare.js"),
         include_str!("ui/detail.js"),
         include_str!("ui/batch.js"),
         "start();})();",
@@ -232,7 +233,6 @@ fn dialogs() -> Markup {
                 button type="button" id="compare-close" data-i18n="close" {}
             }
             p id="compare-caption" {}
-            input type="range" id="compare-slider" min="0" max="100" value="50" aria-label="Comparison position" data-i18n-label="compare";
             div.compare-stage id="compare-stage" data-background="checker" {}
             p.hint id="compare-note" {}
         }

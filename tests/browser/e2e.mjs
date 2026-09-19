@@ -112,12 +112,45 @@ try {
     assert.equal(await text('[data-i18n="statResources"]'), 'Resources');
   });
 
-  await step('full-size comparison dialog opens and closes', async () => {
-    await click('.link-button');
+  await step('comparison modes: swipe, onion skin and amplified difference', async () => {
+    const pick = mode => click(`#inspector [data-compare-mode="${mode}"]`);
+    // A lossy candidate, so that a difference exists.
+    await browser.evaluate(`(() => { const s = document.getElementById('candidate-select'); const lossy = [...s.options].find(o => /quality|q100/.test(o.textContent)); s.value = lossy.value; s.dispatchEvent(new Event('change')); })()`);
+    await pick('swipe');
+    await browser.waitFor(`document.querySelector('#inspector .compare-wrap.mode-swipe .layer.top')?.naturalWidth > 0`);
+    await browser.evaluate(`(() => { const i = document.querySelector('#inspector .compare-range input'); i.value = '25'; i.dispatchEvent(new Event('input')); })()`);
+    assert.equal(await browser.evaluate(`document.querySelector('#inspector .layer.top').style.clipPath`), 'inset(0px 75% 0px 0px)');
+    // The split is measured on the picture itself: the handle sits inside it, a quarter of the way across.
+    const geometry = await browser.evaluate(`(() => { const f = document.querySelector('#inspector .compare-frame').getBoundingClientRect(), h = document.querySelector('#inspector .compare-handle').getBoundingClientRect(), img = document.querySelector('#inspector .layer.base'); return { ratio: (h.left + h.width / 2 - f.left) / f.width, aspect: f.width / f.height, natural: img.naturalWidth / img.naturalHeight }; })()`);
+    assert.ok(Math.abs(geometry.ratio - 0.25) < 0.02, JSON.stringify(geometry));
+    assert.ok(Math.abs(geometry.aspect - geometry.natural) < 0.05, JSON.stringify(geometry));
+    await browser.screenshot(join(shots, 'compare-swipe.png'));
+    await pick('onion');
+    await browser.evaluate(`(() => { const i = document.querySelector('#inspector .compare-range input'); i.value = '30'; i.dispatchEvent(new Event('input')); })()`);
+    assert.equal(await browser.evaluate(`document.querySelector('#inspector .layer.top').style.opacity`), '0.3');
+    await pick('difference');
+    await browser.waitFor(`/differ|identical/.test(document.querySelector('#inspector .compare-control .hint')?.textContent || '')`);
+    assert.match(await text('#inspector .compare-control .hint'), /of pixels differ · largest difference \d+\/255/);
+    const lit = await browser.evaluate(`(() => { const c = document.querySelector('#inspector canvas'); const d = c.getContext('2d').getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] + d[i + 1] + d[i + 2] > 0) n++; return n; })()`);
+    assert.ok(lit > 0, 'a lossy candidate must light up some pixels');
+    await browser.screenshot(join(shots, 'compare-difference.png'));
+    // The lossless PNG candidate differs nowhere.
+    await browser.evaluate(`(() => { const s = document.getElementById('candidate-select'); const lossless = [...s.options].find(o => /PNG · lossless/.test(o.textContent)); s.value = lossless.value; s.dispatchEvent(new Event('change')); })()`);
+    await browser.waitFor(`/identical/.test(document.querySelector('#inspector .compare-control .hint')?.textContent || '')`);
+    // The choice is remembered and keyboard-reachable.
+    assert.equal(await browser.evaluate(`localStorage.getItem('resopt-compare')`), 'difference');
+    assert.equal(await browser.evaluate(`document.querySelector('#inspector [data-compare-mode="difference"]').getAttribute('aria-pressed')`), 'true');
+  });
+
+  await step('full-size comparison dialog offers the overlay modes', async () => {
+    await click('#inspector .link-button');
     assert.equal(await browser.evaluate(`document.getElementById('compare-dialog').open`), true);
-    await browser.waitFor(`document.querySelector('.compare-wrap img')?.naturalWidth > 0`);
+    assert.equal(await browser.evaluate(`document.querySelector('#compare-stage [data-compare-mode="two-up"]').hidden`), true);
+    await click('#compare-stage [data-compare-mode="swipe"]');
+    await browser.waitFor(`document.querySelector('#compare-stage .compare-wrap img')?.naturalWidth > 0`);
     await browser.screenshot(join(shots, 'compare.png'));
     await click('#compare-close');
+    await click('#inspector [data-compare-mode="two-up"]');
   });
 
   await step('SVGA rows show a rendered poster and play frame by frame', async () => {

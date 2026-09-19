@@ -5,9 +5,9 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const ui = name => fs.readFileSync(path.join(__dirname, '../src/ui', name), 'utf8');
-const FILES = ['core.js', 'i18n.js', 'app.js', 'detail.js', 'batch.js'];
+const FILES = ['core.js', 'i18n.js', 'app.js', 'compare.js', 'detail.js', 'batch.js'];
 const api = vm.runInNewContext(`${ui('core.js')}\n${ui('i18n.js')}
-({formatSize, assetUrl, warningKind, warningKinds, blockedReason, recommendedSavings, hasWarningCandidate, displayableInBrowser, pickLocale, translate, issueText, MESSAGES})`);
+({differencePixels, formatSize, assetUrl, warningKind, warningKinds, blockedReason, recommendedSavings, hasWarningCandidate, displayableInBrowser, pickLocale, translate, issueText, MESSAGES})`);
 
 test('the embedded UI parses as one script, exactly as the binary ships it', () => {
   assert.doesNotThrow(() => new vm.Script(`'use strict';(() => {${FILES.map(ui).join('\n')}\nstart();})();`));
@@ -154,6 +154,7 @@ test('every translation key used by the UI exists', () => {
   for (const match of report.matchAll(/data-i18n(?:-label|-placeholder)?="([A-Za-z0-9_]+)"/g)) used.add(match[1]);
   for (const mode of ['Candidates', 'Warnings', 'Duplicates', 'Applied', 'Images', 'Unsupported', 'Failed', 'All']) used.add(`mode${mode}`);
   for (const kind of ['identical', 'resized', 'similar']) used.add(`dup_${kind}`);
+  for (const mode of ['two-up', 'swipe', 'onion', 'difference']) used.add(`compareMode_${mode}`);
   const missing = [...used].filter(key => !api.MESSAGES.en[key]);
   assert.deepEqual(missing, []);
 });
@@ -174,6 +175,25 @@ test('locale selection and issue sentences', () => {
   assert.match(api.issueText('en', 'palette_colors: 128'), /palette of 128 colours/);
   assert.match(api.issueText('en', 'near_lossless'), /no lossless mode/);
   assert.equal(api.issueText('en', 'some_new_reason'), 'some_new_reason');
+});
+
+test('difference view: identical pictures are black, errors are amplified, alpha counts', () => {
+  const px = (...values) => Uint8ClampedArray.from(values);
+  const same = api.differencePixels(px(10, 20, 30, 255, 0, 0, 0, 0), px(10, 20, 30, 255, 0, 0, 0, 0), 64);
+  assert.deepEqual([...same.pixels], [0, 0, 0, 255, 0, 0, 0, 255]);
+  assert.deepEqual([same.max, same.changed], [0, 0]);
+  // A 2/255 colour error becomes clearly visible at x64 and is reported unamplified.
+  const small = api.differencePixels(px(100, 100, 100, 255), px(102, 100, 99, 255), 64);
+  assert.deepEqual([...small.pixels], [128, 0, 64, 255]);
+  assert.deepEqual([small.max, small.changed], [2, 1]);
+  // Colour hidden under alpha 0 is not a difference; a change in alpha is.
+  const hidden = api.differencePixels(px(255, 0, 0, 0), px(0, 255, 0, 0), 64);
+  assert.deepEqual([hidden.max, hidden.changed], [0, 0]);
+  const alpha = api.differencePixels(px(0, 0, 0, 255), px(0, 0, 0, 250), 4);
+  assert.deepEqual([...alpha.pixels], [20, 20, 20, 255]);
+  assert.equal(alpha.max, 5);
+  // Amplified values saturate instead of wrapping.
+  assert.equal(api.differencePixels(px(255, 255, 255, 255), px(0, 0, 0, 255), 64).pixels[0], 255);
 });
 
 test('browser-displayable formats exclude HEIC', () => {

@@ -2,6 +2,7 @@
 const boot = JSON.parse(document.getElementById('report-data').textContent);
 const $ = id => document.getElementById(id);
 const reducedMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+function readStoredEarly(key) { try { return localStorage.getItem(key); } catch { return null; } }
 const state = {
   token: boot.sessionToken || null,
   meta: boot.meta || null,
@@ -11,6 +12,7 @@ const state = {
   progress: { completed: 0, total: 0 },
   error: null, disconnected: false,
   operations: {}, busy: false, message: '', capabilities: null,
+  compareMode: readStoredEarly('resopt-compare'), differenceGain: 16,
   mode: 'candidates', page: 0, selected: null, selectedRecords: new Set(), selectionAnchor: null,
   chosen: null, background: 'checker', filtered: [],
 };

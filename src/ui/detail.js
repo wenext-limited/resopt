@@ -62,11 +62,19 @@ function renderDetail() {
     const swatches = el('div', 'backgrounds'); swatches.setAttribute('role', 'group'); swatches.setAttribute('aria-label', t('background'));
     for (const [value, name] of [['checker', 'bgChecker'], ['light', 'bgLight'], ['dark', 'bgDark']]) {
       const b = el('button', 'swatch'); b.type = 'button'; b.dataset.background = value; b.title = t(name); b.setAttribute('aria-label', t(name)); b.setAttribute('aria-pressed', String(state.background === value));
-      b.addEventListener('click', () => { state.background = value; document.querySelectorAll('.canvas,.compare-stage').forEach(n => { n.dataset.background = value; }); swatches.querySelectorAll('button').forEach(n => n.setAttribute('aria-pressed', String(n.dataset.background === value))); });
+      b.addEventListener('click', () => { state.background = value; document.querySelectorAll('.canvas,.compare-stage,.compare-wrap:not(.mode-difference)').forEach(n => { n.dataset.background = value; }); swatches.querySelectorAll('button').forEach(n => n.setAttribute('aria-pressed', String(n.dataset.background === value))); });
       swatches.append(b);
     }
     controls.append(swatches); pane.append(controls);
-    const comparison = el('div', 'comparison'); comparison.append(drawPreview(r, c, true), drawPreview(r, c, false)); pane.append(comparison);
+    const beforeSrc = assetUrl(r.original_preview), afterSrc = assetUrl(c?.preview);
+    // Overlay modes need both pictures; otherwise fall back to 2-up with its placeholder.
+    if (beforeSrc && afterSrc) pane.append(compareModeSwitch(renderDetail));
+    if (beforeSrc && afterSrc && compareMode() !== 'two-up') {
+      pane.append(compareStage({ before: beforeSrc, after: afterSrc, beforeAlt: t('original'), afterAlt: candidateLabel(c), fit: 'contain' }));
+      const sizes = el('p', 'preview-size'); sizes.append(sizeNode(r.resource?.bytes), el('span', '', ' → '), sizeNode(c.bytes));
+      if (c.savings_bytes > 0) sizes.append(el('small', '', ` −${size(c.savings_bytes)} · ${formatPercent(c.savings_bytes / (r.resource.bytes || 1))}`));
+      pane.append(sizes);
+    } else { const comparison = el('div', 'comparison'); comparison.append(drawPreview(r, c, true), drawPreview(r, c, false)); pane.append(comparison); }
     if (c?.artifact && r.original_artifact) { const open = el('button', 'link-button', t('compare')); open.type = 'button'; open.addEventListener('click', () => openCompare(r, c)); pane.append(open); }
     pane.append(el('p', 'preview-note', t('previewNote')));
     if (c && warningKind(c)) pane.append(warningBlock(c));
@@ -226,20 +234,21 @@ async function performAction(action) {
 
 // ---- full-size comparison ------------------------------------------------------
 function openCompare(r, c) {
-  const stage = $('compare-stage'); stage.replaceChildren(); stage.dataset.background = state.background;
+  const stage = $('compare-stage'); stage.dataset.background = state.background;
   const canShow = displayableInBrowser(c.format) && displayableInBrowser(r.resource.format);
-  // The candidate is the base layer; the original is clipped over its left part.
-  const before = el('img'), after = el('img'), clip = el('div', 'compare-clip'), wrap = el('div', 'compare-wrap');
-  before.src = canShow ? assetUrl(r.original_artifact) : assetUrl(r.original_preview); after.src = canShow ? assetUrl(c.artifact) : assetUrl(c.preview);
-  before.alt = t('original'); after.alt = candidateLabel(c);
-  clip.append(before); wrap.append(after, clip); stage.append(wrap);
-  const slider = $('compare-slider'); slider.value = '50';
-  const update = () => { clip.style.width = `${slider.value}%`; before.style.width = `${after.clientWidth}px`; };
-  slider.oninput = update; after.onload = update;
-  $('compare-caption').textContent = `${t('original')} ◀ ▶ ${candidateLabel(c)} · ${size(r.resource.bytes)} → ${size(c.bytes)}`;
+  const before = canShow ? assetUrl(r.original_artifact) : assetUrl(r.original_preview), after = canShow ? assetUrl(c.artifact) : assetUrl(c.preview);
+  const render = () => {
+    // 2-up makes no sense in a dialog that exists to overlay; show swipe instead.
+    if (compareMode() === 'two-up') state.compareMode = 'swipe';
+    stage.replaceChildren(compareModeSwitch(render), compareStage({ before, after, beforeAlt: t('original'), afterAlt: candidateLabel(c), fit: 'natural' }));
+    stage.querySelector('[data-compare-mode="two-up"]').hidden = true;
+  };
+  const chosen = state.compareMode; render();
+  $('compare-caption').textContent = `${t('original')} · ${candidateLabel(c)} · ${size(r.resource.bytes)} → ${size(c.bytes)}`;
   const unsupported = [c.format, r.resource.format].find(f => !displayableInBrowser(f));
   $('compare-note').textContent = canShow ? t('compareHint') : t('compareUnavailable', String(unsupported).toUpperCase());
-  $('compare-dialog').showModal(); slider.focus(); update();
+  $('compare-dialog').addEventListener('close', () => { state.compareMode = chosen; if (state.selected === r) renderDetail(); }, { once: true });
+  $('compare-dialog').showModal(); stage.querySelector('input,select,button:not([hidden])')?.focus();
 }
 
 function setupDialogs() {
