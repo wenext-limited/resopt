@@ -13,6 +13,30 @@ test('the embedded UI parses as one script, exactly as the binary ships it', () 
   assert.doesNotThrow(() => new vm.Script(`'use strict';(() => {${FILES.map(ui).join('\n')}\nstart();})();`));
 });
 
+test('report rows support Shift ranges and Option/Alt toggles', () => {
+  const source = ui('app.js');
+  const start = source.indexOf('function selectionAfterClick');
+  const end = source.indexOf('async function api', start);
+  const { selectionAfterClick } = vm.runInNewContext(`${source.slice(start, end)}; ({selectionAfterClick})`);
+  const rows = ['a', 'b', 'c', 'd', 'e'];
+  let selection = selectionAfterClick(new Set(), null, 'b', rows, false, false);
+  selection = selectionAfterClick(selection.records, selection.anchor, 'e', rows, true, false);
+  assert.deepEqual([...selection.records], ['b', 'c', 'd', 'e']);
+  selection = selectionAfterClick(selection.records, selection.anchor, 'd', rows, false, true);
+  assert.deepEqual([...selection.records], ['b', 'c', 'e']);
+});
+
+test('batch policy prefers an explicit multi-selection over the current view', () => {
+  const source = ui('batch.js');
+  const start = source.indexOf('function batchPolicy');
+  const end = source.indexOf('function batchView', start);
+  const controls = { 'batch-alpha': { checked: false }, 'batch-quality': { checked: false }, 'batch-min-score': { value: '' }, 'batch-lossless': { checked: true }, 'batch-lossy': { checked: false }, 'batch-cross': { checked: false }, 'batch-scope': { checked: false } };
+  const a = {}, b = {}, c = {}, records = [a, b, c];
+  const context = { state: { selectedRecords: new Set([a, c]), filtered: records }, $: id => controls[id], indexOf: r => records.indexOf(r) };
+  const { batchPolicy } = vm.runInNewContext(`${source.slice(start, end)}; ({batchPolicy})`, context);
+  assert.deepEqual([...batchPolicy().resources], [0, 2]);
+});
+
 test('sizes use binary units with readable precision', () => {
   assert.equal(api.formatSize(0), '0 B');
   assert.equal(api.formatSize(1023), '1,023 B');

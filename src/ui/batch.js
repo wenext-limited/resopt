@@ -9,7 +9,7 @@ function batchPolicy() {
   return {
     lossless: $('batch-lossless').checked, lossy: $('batch-lossy').checked, cross_format: $('batch-cross').checked,
     min_score: floor === '' ? null : Number(floor), formats: [], accept_warnings: warnings,
-    resources: $('batch-scope').checked ? state.filtered.map(indexOf) : null,
+    resources: state.selectedRecords.size > 1 ? [...state.selectedRecords].map(indexOf) : $('batch-scope').checked ? state.filtered.map(indexOf) : null,
   };
 }
 
@@ -18,7 +18,11 @@ function batchView(name) { for (const view of ['policy', 'plan', 'progress']) $(
 function syncBatchForm() {
   const lossy = $('batch-lossy').checked;
   for (const id of ['batch-alpha', 'batch-quality', 'batch-min-score']) { $(id).disabled = !lossy; if (!lossy && $(id).type === 'checkbox') $(id).checked = false; }
-  $('batch-scope-label').textContent = t('batchScope', count(state.filtered.length));
+  const selected = state.selectedRecords.size > 1;
+  $('batch-scope').disabled = selected;
+  if (selected) { $('batch-scope').checked = true; $('batch-scope').dataset.selectionForced = 'true'; }
+  else if ($('batch-scope').dataset.selectionForced) { $('batch-scope').checked = false; delete $('batch-scope').dataset.selectionForced; }
+  $('batch-scope-label').textContent = selected ? t('batchSelectedScope', count(state.selectedRecords.size)) : t('batchScope', count(state.filtered.length));
   $('batch-preview').disabled = !$('batch-lossless').checked && !lossy;
   $('batch-error').textContent = '';
 }

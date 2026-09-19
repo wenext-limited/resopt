@@ -11,7 +11,8 @@ const state = {
   progress: { completed: 0, total: 0 },
   error: null, disconnected: false,
   operations: {}, busy: false, message: '', capabilities: null,
-  mode: 'candidates', page: 0, selected: null, chosen: null, background: 'checker', filtered: [],
+  mode: 'candidates', page: 0, selected: null, selectedRecords: new Set(), selectionAnchor: null,
+  chosen: null, background: 'checker', filtered: [],
 };
 const PAGE_SIZE = 50;
 
@@ -40,6 +41,7 @@ const pathText = r => String(r.resource?.path || '');
 const indexOf = r => state.records.indexOf(r);
 const operation = r => state.operations[indexOf(r)];
 const isApplied = r => { const s = operation(r); return !!s && s.state !== 'original'; };
+const isOptimized = r => operation(r)?.state === 'applied';
 function appliedSavings(r) {
   const s = operation(r);
   return s?.state === 'applied' ? (r.candidates?.[s.candidate]?.savings_bytes || 0) : 0;
@@ -47,6 +49,17 @@ function appliedSavings(r) {
 function lowestScore(r) {
   const scores = (r.candidates || []).map(c => c.difference?.ssimulacra2).filter(v => typeof v === 'number');
   return scores.length ? Math.min(...scores) : Infinity;
+}
+
+function selectionAfterClick(current, anchor, clicked, ordered, shift, alt) {
+  const next = alt ? new Set(current) : new Set();
+  const start = ordered.indexOf(anchor), end = ordered.indexOf(clicked);
+  if (shift && start >= 0 && end >= 0) {
+    for (let i = Math.min(start, end); i <= Math.max(start, end); i++) next.add(ordered[i]);
+    return { records: next, anchor };
+  }
+  if (alt && next.has(clicked)) next.delete(clicked); else next.add(clicked);
+  return { records: next, anchor: clicked };
 }
 
 async function api(path, body) {
@@ -159,10 +172,18 @@ function applyFilters() {
 // `reset` moves to the first page and selection; live updates keep the user's place.
 function refresh(reset) {
   renderSummary(); applyFilters();
-  if (reset) { state.page = 0; state.selected = null; }
+  state.selectedRecords = new Set([...state.selectedRecords].filter(r => state.filtered.includes(r)));
+  if (reset) state.page = 0;
   state.page = Math.min(state.page, Math.max(0, Math.ceil(state.filtered.length / PAGE_SIZE) - 1));
   const selectionChanged = !state.selected || !state.filtered.includes(state.selected);
   if (selectionChanged) { state.selected = state.filtered[state.page * PAGE_SIZE] || null; state.chosen = preferredCandidate(state.selected); }
+  if (state.selected && !state.selectedRecords.size) state.selectedRecords.add(state.selected);
+  else if (state.selected && !state.selectedRecords.has(state.selected)) {
+    state.selected = state.filtered.find(r => state.selectedRecords.has(r)) || state.selected;
+    state.chosen = preferredCandidate(state.selected);
+  }
+  if (reset && state.selected) state.chosen = preferredCandidate(state.selected);
+  if (!state.filtered.includes(state.selectionAnchor)) state.selectionAnchor = state.selected;
   document.querySelectorAll('.mode').forEach(b => { const on = b.dataset.mode === state.mode; b.classList.toggle('active', on); b.setAttribute('aria-pressed', String(on)); });
   renderList();
   if (selectionChanged || reset || state.phase === 'ready') renderDetail();
@@ -196,20 +217,23 @@ function renderList() {
   }
   for (const r of items) {
     const row = el('button', 'resource-row'); row.type = 'button'; row.dataset.index = String(indexOf(r));
-    row.setAttribute('role', 'option'); row.setAttribute('aria-selected', String(r === state.selected)); row.title = pathText(r);
+    row.dataset.active = String(r === state.selected); row.dataset.optimized = String(isOptimized(r));
+    row.setAttribute('role', 'option'); row.setAttribute('aria-selected', String(state.selectedRecords.has(r))); row.title = pathText(r);
     const identity = el('span', 'identity'), thumb = el('span', 'thumb'), src = assetUrl(r.original_preview);
     if (src) { const img = el('img'); img.src = src; img.alt = ''; img.loading = 'lazy'; img.decoding = 'async'; thumb.append(img); }
     else thumb.textContent = String(r.resource?.format || 'file').toUpperCase().slice(0, 5);
-    const copy = el('span', 'file-copy');
-    copy.append(el('span', 'filename', basename(pathText(r))), el('span', 'file-context', `${String(r.resource?.format || '').toUpperCase()} · ${pathText(r).replace(/[\\/]?[^\\/]+$/, '')}`));
+    const copy = el('span', 'file-copy'), name = el('span', 'filename-row'), optimized = el('span', 'optimized-badge', t('modeApplied'));
+    optimized.hidden = !isOptimized(r); name.append(el('span', 'filename', basename(pathText(r))), optimized);
+    copy.append(name, el('span', 'file-context', `${String(r.resource?.format || '').toUpperCase()} · ${pathText(r).replace(/[\\/]?[^\\/]+$/, '')}`));
     identity.append(thumb, copy);
     const saved = recommendedSavings(r), cell = el('span', saved ? 'number saving' : 'number status-muted');
-    if (isApplied(r)) cell.append(el('span', 'badge', t('modeApplied')));
+    if (isOptimized(r)) cell.append(sizeNode(appliedSavings(r)), el('small', 'optimized-copy', `✓ ${t('modeApplied')}`));
+    else if (isApplied(r)) cell.append(el('span', 'badge warn', t('modeApplied')));
     else if (saved) cell.append(sizeNode(saved), el('small', '', `−${formatPercent(saved / (r.resource.bytes || 1))}`));
     else if (hasWarningCandidate(r)) cell.append(el('span', 'badge warn', t('modeWarnings')));
     else cell.append(el('span', '', '—'));
     row.append(identity, sizeNode(r.resource?.bytes, 'number'), cell);
-    row.addEventListener('click', () => { selectRecord(r); if (window.matchMedia('(max-width: 760px)').matches) $('inspector').scrollIntoView({ block: 'start', behavior: reducedMotion() ? 'instant' : 'smooth' }); });
+    row.addEventListener('click', event => { selectRecord(r, event); if (window.matchMedia('(max-width: 760px)').matches) $('inspector').scrollIntoView({ block: 'start', behavior: reducedMotion() ? 'instant' : 'smooth' }); });
     row.addEventListener('keydown', event => {
       const move = { ArrowDown: 1, ArrowUp: -1 }[event.key]; if (!move) return;
       event.preventDefault(); const next = items[items.indexOf(r) + move];
@@ -219,16 +243,24 @@ function renderList() {
   }
   if (focused !== undefined) list.querySelector(`[data-index="${focused}"]`)?.focus();
   const total = state.filtered.length;
-  $('range').textContent = total ? t('range', count(start + 1), count(Math.min(start + PAGE_SIZE, total)), count(total)) : t('none');
+  $('range').textContent = `${total ? t('range', count(start + 1), count(Math.min(start + PAGE_SIZE, total)), count(total)) : t('none')} · ${t('selectedCount', count(state.selectedRecords.size))}`;
   $('page-number').textContent = `${total ? state.page + 1 : 0} / ${Math.ceil(total / PAGE_SIZE)}`;
   $('previous').disabled = state.page === 0; $('next').disabled = start + PAGE_SIZE >= total;
 }
-function selectRecord(r) {
-  state.selected = r; state.chosen = preferredCandidate(r); state.message = '';
-  for (const row of $('results').children) row.setAttribute?.('aria-selected', String(row.dataset?.index === String(indexOf(r))));
+function selectRecord(r, event = {}) {
+  const result = selectionAfterClick(state.selectedRecords, state.selectionAnchor, r, state.filtered, !!event.shiftKey, !!event.altKey);
+  state.selectedRecords = result.records; state.selectionAnchor = result.anchor;
+  state.selected = state.selectedRecords.has(r) ? r : state.filtered.find(item => state.selectedRecords.has(item)) || r;
+  state.chosen = preferredCandidate(state.selected); state.message = '';
+  for (const row of $('results').children) {
+    const item = state.records[Number(row.dataset?.index)];
+    row.setAttribute?.('aria-selected', String(state.selectedRecords.has(item)));
+    row.dataset.active = String(item === state.selected);
+  }
+  renderSummary();
   renderDetail();
 }
-function changePage(delta) { state.page += delta; state.selected = state.filtered[state.page * PAGE_SIZE] || null; state.chosen = preferredCandidate(state.selected); renderList(); renderDetail(); $('results').scrollTop = 0; }
+function changePage(delta) { state.page += delta; const items = state.filtered.slice(state.page * PAGE_SIZE, (state.page + 1) * PAGE_SIZE); state.selected = items.find(r => state.selectedRecords.has(r)) || items[0] || null; if (state.selected && !state.selectedRecords.size) state.selectedRecords.add(state.selected); state.chosen = preferredCandidate(state.selected); renderList(); renderDetail(); $('results').scrollTop = 0; }
 
 // ---- static chrome ------------------------------------------------------------
 function applyStaticText() {

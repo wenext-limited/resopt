@@ -28,10 +28,11 @@ function renderDetail() {
   const pane = $('inspector'); pane.replaceChildren();
   const r = state.selected;
   if (!r) { const empty = el('div', 'empty'); empty.append(el('strong', '', t('select')), el('span', '', t('selectHint'))); pane.append(empty); return; }
+  renderMultiSelection(pane);
   const variants = Array.isArray(r.candidates) ? r.candidates : [], c = variants[state.chosen] || null;
   const heading = el('div', 'detail-heading'), title = el('div');
   title.append(el('div', 'eyebrow', t(`kind_${r.resource?.kind}`)), el('h1', '', basename(pathText(r))));
-  heading.append(title, el('span', `tag ${r.status === 'failed' ? 'danger' : ''}`, t(`status_${r.status}`)));
+  heading.append(title, el('span', `tag ${isOptimized(r) ? 'optimized-status' : r.status === 'failed' ? 'danger' : ''}`, isOptimized(r) ? t('modeApplied') : t(`status_${r.status}`)));
   pane.append(heading, el('p', 'detail-path', pathText(r)));
   const facts = el('div', 'facts'); facts.append(el('span', '', String(r.resource?.format || '').toUpperCase()), sizeNode(r.resource?.bytes));
   if (r.image) {
@@ -73,6 +74,18 @@ function renderDetail() {
   pane.append(notes);
   if (!reducedMotion()) pane.animate([{ opacity: .7, transform: 'translateY(2px)' }, { opacity: 1, transform: 'none' }], { duration: 140, easing: 'ease-out' });
   pane.scrollTop = 0;
+}
+
+function renderMultiSelection(pane) {
+  if (state.selectedRecords.size < 2) return;
+  const items = state.filtered.filter(r => state.selectedRecords.has(r));
+  const block = el('section', 'multi-selection');
+  block.append(el('strong', '', t('multiSelected', count(items.length))), el('p', '', t('multiSelectedHint')));
+  if (state.token && state.phase === 'ready') {
+    const action = el('button', 'primary', t('batchSelected', count(items.length))); action.type = 'button';
+    action.addEventListener('click', () => $('batch-open').click()); block.append(action);
+  }
+  pane.append(block);
 }
 
 function duplicateBlock(r, group) {

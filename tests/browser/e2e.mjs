@@ -37,7 +37,7 @@ try {
     await browser.waitFor(`!document.getElementById('batch-open').hidden`, 300000);
     assert.ok(await number('#stat-opportunities') > 0);
     assert.match(await text('#stat-savings'), /(B|KiB|MiB)$/);
-    assert.match(await browser.evaluate(`document.getElementById('stat-savings').title`), /bytes/);
+    assert.match(await browser.evaluate(`document.getElementById('stat-savings').title`), /(bytes|字节)/);
   });
   await browser.screenshot(join(shots, 'desktop-light-or-system.png'));
 
@@ -66,6 +66,19 @@ try {
     await browser.evaluate(`document.activeElement.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true }))`);
     assert.notEqual(await text('.detail-heading h1'), first);
     assert.equal(await browser.evaluate(`document.querySelectorAll('[aria-selected="true"]').length`), 1);
+  });
+
+  await step('Shift and Option select a batch scope and update the inspector', async () => {
+    assert.ok(await browser.evaluate(`document.querySelectorAll('.resource-row').length >= 3`));
+    await browser.evaluate(`(() => { const rows = document.querySelectorAll('.resource-row'); rows[0].dispatchEvent(new MouseEvent('click', { bubbles: true })); rows[2].dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true })); })()`);
+    assert.equal(await browser.evaluate(`document.querySelectorAll('.resource-row[aria-selected="true"]').length`), 3);
+    assert.ok(await browser.evaluate(`!!document.querySelector('.multi-selection')`));
+    await browser.evaluate(`document.querySelectorAll('.resource-row')[1].dispatchEvent(new MouseEvent('click', { bubbles: true, altKey: true }))`);
+    assert.equal(await browser.evaluate(`document.querySelectorAll('.resource-row[aria-selected="true"]').length`), 2);
+    await click('.multi-selection .primary');
+    assert.match(await text('#batch-scope-label'), /(selected|已选)/i);
+    await click('#batch-close');
+    await browser.evaluate(`document.querySelector('.resource-row').dispatchEvent(new MouseEvent('click', { bubbles: true }))`);
   });
 
   await step('accessibility basics: every control has a name, images have alt', async () => {

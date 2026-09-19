@@ -35,3 +35,16 @@ dialog h3{font-size:13px;margin:16px 0 6px}.check{display:flex;gap:9px;align-ite
 @media(forced-colors:active){.resource-row[aria-selected=true]{outline:2px solid Highlight}}
 .toolbar{flex-wrap:wrap}.search{min-width:220px}
 .duplicate-block{border:1px solid var(--line);border-radius:8px;padding:12px;margin:14px 0;font-size:12px;display:flex;flex-direction:column;gap:4px}.duplicate-block .link-button{padding:0;text-align:left;font-size:11px}.duplicate-block .link-button:disabled{color:var(--ink);opacity:1;font-weight:600}
+
+/* Multi-selection and applied-image state */
+:root{--optimized-bg:#eaf6ee;--optimized-hover:#def0e4;--optimized-selected:#dff2e9;--optimized-pill:#d1ead9;--optimized-ink:#14613a}
+:root[data-theme=dark]{--optimized-bg:#1b3529;--optimized-hover:#234232;--optimized-selected:#28443a;--optimized-pill:#2b503a;--optimized-ink:#b0ebc0}
+@media(prefers-color-scheme:dark){:root:not([data-theme]){--optimized-bg:#1b3529;--optimized-hover:#234232;--optimized-selected:#28443a;--optimized-pill:#2b503a;--optimized-ink:#b0ebc0}}
+.resource-row[data-active=true]{box-shadow:inset 0 0 0 1px var(--accent)}
+.resource-row[data-optimized=true]{background:var(--optimized-bg);border-left-color:var(--optimized-ink)}
+.resource-row[data-optimized=true]:hover{background:var(--optimized-hover)}
+.resource-row[data-optimized=true][aria-selected=true]{background:var(--optimized-selected);border-left-color:var(--accent)}
+.file-copy{flex:1 1 0;min-width:0}.filename-row{display:flex;align-items:center;gap:5px;width:100%;min-width:0}.filename-row .filename{min-width:0;flex:1}
+.optimized-badge{flex-shrink:0;padding:1px 5px;border-radius:4px;background:var(--optimized-pill);color:var(--optimized-ink);font-size:9px;font-weight:650;white-space:nowrap}.optimized-badge[hidden]{display:none}
+.optimized-copy,.tag.optimized-status{color:var(--optimized-ink)}.tag.optimized-status{background:var(--optimized-pill)}
+.multi-selection{padding:13px;border:1px solid var(--line);border-radius:9px;background:var(--surface);margin-bottom:17px}.multi-selection p{margin:4px 0 10px;color:var(--muted);font-size:11px}.multi-selection button{padding:8px 12px;border:1px solid var(--accent);border-radius:6px;background:var(--accent);color:#fff}
