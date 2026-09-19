@@ -54,6 +54,9 @@ pub struct AnalysisOptions {
     /// Compare WebP candidates for loose files and Android resources. On by
     /// default; asset-catalog renditions never receive WebP.
     pub webp: bool,
+    /// Compare lossy PNG candidates (palette quantization) for PNG sources.
+    /// The file stays a PNG, so names, references and decoders are unaffected.
+    pub lossy_png: bool,
     /// Overrides the `minSdk` detected from Gradle files.
     pub android_min_sdk: Option<u32>,
     /// Persistent result cache directory. `None` disables the cache; the CLI
@@ -75,6 +78,7 @@ impl Default for AnalysisOptions {
             png_level: Policy::default().png_level,
             png_reductions: false,
             webp: true,
+            lossy_png: true,
             android_min_sdk: None,
             cache_dir: None,
         }

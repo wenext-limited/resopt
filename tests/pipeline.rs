@@ -313,6 +313,8 @@ fn duplicates_under_a_tight_pixel_budget_never_deadlock() {
                     qualities: vec![85],
                     jobs: 4,
                     png_level: 5,
+                    // Keep this about scheduling; quantization is slow in debug builds.
+                    lossy_png: false,
                     max_pixels: 640 * 640,
                     ..Default::default()
                 },
@@ -385,4 +387,123 @@ fn every_decoded_image_gets_a_preview_even_without_candidates() {
                 .contains(&"webp_candidates_disabled".to_string())
         );
     }
+}
+
+/// Lossy PNG keeps the file a PNG, is never applied by the default (lossless)
+/// batch policy, and round-trips through apply and restore like any candidate.
+#[test]
+fn lossy_png_candidates_are_opt_in_at_apply_time_and_restore_exactly() {
+    let base = tempfile::tempdir().unwrap();
+    let project = base.path().join("project");
+    // Many distinct colours: a palette of 64–256 entries must lose something.
+    let mut bytes = Vec::new();
+    {
+        let mut encoder = png::Encoder::new(&mut bytes, 160, 160);
+        encoder.set_color(png::ColorType::Rgba);
+        // Stored uncompressed, like many exported assets, so savings are real.
+        encoder.set_compression(png::Compression::NoCompression);
+        let data: Vec<u8> = (0..160 * 160_u32)
+            .flat_map(|p| {
+                [
+                    (p % 160) as u8,
+                    (p / 160) as u8,
+                    ((p % 160 + p / 160) / 2) as u8,
+                    255,
+                ]
+            })
+            .collect();
+        encoder
+            .write_header()
+            .unwrap()
+            .write_image_data(&data)
+            .unwrap();
+    }
+    write(
+        &project,
+        "App/Assets.xcassets/Hero.imageset/hero.png",
+        &bytes,
+    );
+    write(
+        &project,
+        "App/Assets.xcassets/Hero.imageset/Contents.json",
+        br#"{"images":[{"filename":"hero.png","idiom":"universal"}],"info":{"author":"xcode","version":1}}"#,
+    );
+    let out = base.path().join("report");
+    let report = analyze(
+        &project,
+        &out,
+        AnalysisOptions {
+            qualities: vec![75, 95],
+            // Judge the mechanics here, not the score of a synthetic image.
+            min_score: 0.0,
+            webp: false,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let row = &report
+        .resources
+        .iter()
+        .find(|r| r.resource.format == "png")
+        .unwrap();
+    let lossy: Vec<_> = row
+        .candidates
+        .iter()
+        .filter(|c| c.format == "png" && c.lossy)
+        .collect();
+    assert_eq!(lossy.len(), 2, "{:?}", row.candidates);
+    for candidate in &lossy {
+        assert!(
+            candidate.artifact.is_some() && candidate.valid,
+            "{candidate:?}"
+        );
+        assert!(candidate.difference.as_ref().unwrap().ssimulacra2.is_some());
+        assert!(
+            candidate
+                .notes
+                .iter()
+                .any(|n| n.starts_with("palette_colors: "))
+        );
+    }
+    let (q75, q95) = (lossy[0], lossy[1]);
+    assert!(q75.bytes < q95.bytes, "fewer colours should be smaller");
+
+    // The default batch policy is lossless-only.
+    let default_plan = plan_report(&out, &BatchPolicy::default()).unwrap();
+    assert!(default_plan.items.iter().all(|i| !i.lossy));
+    let policy = BatchPolicy {
+        lossless: false,
+        lossy: true,
+        formats: vec!["png".into()],
+        ..Default::default()
+    };
+    let plan = plan_report(&out, &policy).unwrap();
+    assert_eq!(plan.items.len(), 1);
+    assert_eq!(
+        (plan.items[0].format.as_str(), plan.cross_format_items),
+        ("png", 0)
+    );
+    let status = apply_report(&out, &policy).unwrap();
+    assert_eq!(
+        (status.applied, status.failed),
+        (1, 0),
+        "{:?}",
+        status.outcomes
+    );
+    let source = project.join("App/Assets.xcassets/Hero.imageset/hero.png");
+    let applied = fs::read(&source).unwrap();
+    assert!(applied.len() < bytes.len());
+    let info = png::Decoder::new(std::io::Cursor::new(&applied))
+        .read_info()
+        .unwrap();
+    assert_eq!(
+        (
+            info.info().color_type,
+            info.info().width,
+            info.info().height
+        ),
+        (png::ColorType::Indexed, 160, 160)
+    );
+    assert_eq!(restore_report(&out).unwrap().applied, 1);
+    assert_eq!(fs::read(&source).unwrap(), bytes);
 }

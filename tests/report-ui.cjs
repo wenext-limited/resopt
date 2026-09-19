@@ -96,6 +96,7 @@ test('locale selection and issue sentences', () => {
   assert.match(api.issueText('en', 'android_min_sdk_16_below_webp_requirement_18'), /API 18\+.*minSdk is 16/);
   assert.match(api.issueText('en', 'audio_optimization_backend_not_implemented'), /no optimizer/);
   assert.match(api.issueText('en', 'metadata_not_carried_over: tEXt, eXIf'), /tEXt, eXIf/);
+  assert.match(api.issueText('en', 'palette_colors: 128'), /palette of 128 colours/);
   assert.equal(api.issueText('en', 'some_new_reason'), 'some_new_reason');
 });
 

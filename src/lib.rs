@@ -66,6 +66,8 @@ mod optimizer;
 #[cfg(feature = "native")]
 mod plan;
 mod png_pixels;
+#[cfg(feature = "native")]
+mod png_quantize;
 mod quality;
 #[cfg(feature = "native")]
 mod references;

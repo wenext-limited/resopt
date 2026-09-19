@@ -42,6 +42,9 @@ struct AnalysisArgs {
     /// and Android resources).
     #[arg(long)]
     no_webp: bool,
+    /// Do not compare lossy PNG candidates (palette quantization; on by default).
+    #[arg(long)]
+    no_lossy_png: bool,
     /// Accepted for compatibility; WebP candidates are already on by default.
     #[arg(long, hide = true)]
     webp: bool,
@@ -74,6 +77,7 @@ impl AnalysisArgs {
             png_level: self.png_level,
             png_reductions: self.png_reductions,
             webp: !self.no_webp,
+            lossy_png: !self.no_lossy_png,
             min_score: self.min_score,
             max_alpha_error: self.max_alpha_error,
             android_min_sdk: self.android_min_sdk,

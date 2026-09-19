@@ -255,8 +255,7 @@ impl Review {
             "candidate size mismatch"
         );
         match candidate.format.as_str() {
-            "png" => {
-                ensure!(!candidate.lossy, "PNG must be lossless");
+            "png" if !candidate.lossy => {
                 optimizer::verify(&original, &optimized, self.report.options.png_reductions)?;
             }
             "svga" => {
@@ -277,8 +276,10 @@ impl Review {
                     self.report.options.max_pixels,
                 )?;
             }
-            "jpeg" | "heic" | "webp" => {
-                ensure!(candidate.lossy, "JPEG/HEIC/WebP requires lossy approval");
+            // Lossy PNG (palette quantization) is judged like every other
+            // lossy format: decoded, compared and held to the thresholds.
+            "png" | "jpeg" | "heic" | "webp" => {
+                ensure!(candidate.lossy, "lossy candidate requires lossy approval");
                 let before = image_backend::decode(&original, self.report.options.max_pixels)?;
                 let after = image_backend::decode(&optimized, self.report.options.max_pixels)?;
                 ensure!(

@@ -77,6 +77,14 @@ pub(crate) fn trials(
         issues.push(lock.clone());
         return (trials, issues);
     }
+    // Same format, same name, same references: only the pixels change. Locked
+    // files returned above, so nine-patch markers are never quantized.
+    if options.lossy_png && resource.format == "png" {
+        trials.extend(options.qualities.iter().map(|quality| Trial {
+            format: "png",
+            quality: Some(*quality),
+        }));
+    }
     let lossy = |format: &'static str| {
         options.qualities.iter().map(move |quality| Trial {
             format,
@@ -125,6 +133,15 @@ pub(crate) fn trials(
         }
     }
     (trials, issues)
+}
+
+/// Policy for the lossless pass after quantization: reductions are always
+/// allowed because the quantized image is new, not the user's original.
+fn lossless_pass(options: &AnalysisOptions) -> crate::Policy {
+    crate::Policy {
+        reductions: true,
+        ..options.png_policy()
+    }
 }
 
 /// Pixel count from the file header, used to reserve memory before decoding.
@@ -281,6 +298,13 @@ fn analyze_into(
             };
             let bytes = timings.time(phase, || match (format, quality) {
                 ("webp", Some(quality)) => webp_backend::encode(original, &decoded, quality),
+                ("png", Some(quality)) => {
+                    let colors = crate::png_quantize::colors_for_quality(quality);
+                    let indexed =
+                        crate::png_quantize::quantize(original, colors, options.max_pixels)?;
+                    // A lossless pass over the quantized image: smaller, same pixels.
+                    Ok(optimizer::optimize(&indexed, &lossless_pass(options)).unwrap_or(indexed))
+                }
                 ("webp", None) => webp_backend::encode_lossless(original, options.max_pixels),
                 (_, Some(quality)) => image_backend::encode(original, format, quality),
                 (_, None) => optimizer::optimize(original, &options.png_policy()),
@@ -326,6 +350,14 @@ fn analyze_into(
             );
             candidate.difference = Some(difference);
             candidate.valid = candidate.rejection.is_none();
+            if format == "png"
+                && let Some(quality) = quality
+            {
+                candidate.notes.push(format!(
+                    "palette_colors: {}",
+                    crate::png_quantize::colors_for_quality(quality)
+                ));
+            }
             if format == "webp" {
                 let dropped = webp_backend::dropped_png_metadata(original);
                 if !dropped.is_empty() {
@@ -403,6 +435,8 @@ mod tests {
     fn android_resources_never_receive_heic_or_new_jpeg_files() {
         let options = AnalysisOptions {
             webp: true,
+            // These cases are about WebP/HEIC policy.
+            lossy_png: false,
             qualities: vec![85],
             ..Default::default()
         };
@@ -421,6 +455,8 @@ mod tests {
     fn webp_is_blocked_with_a_reason_below_the_required_api_level() {
         let options = AnalysisOptions {
             webp: true,
+            // These cases are about WebP/HEIC policy.
+            lossy_png: false,
             qualities: vec![85],
             ..Default::default()
         };
@@ -441,6 +477,8 @@ mod tests {
     fn format_locked_files_only_get_same_format_lossless_work() {
         let options = AnalysisOptions {
             webp: true,
+            // These cases are about WebP/HEIC policy.
+            lossy_png: false,
             ..Default::default()
         };
         for path in [
@@ -465,6 +503,8 @@ mod tests {
     fn catalog_renditions_never_receive_webp_and_policy_keys_separate_classes() {
         let options = AnalysisOptions {
             webp: true,
+            // These cases are about WebP/HEIC policy.
+            lossy_png: false,
             ..Default::default()
         };
         let catalog = resource("App/Assets.xcassets/a.imageset/a.png", "png");
@@ -503,5 +543,49 @@ mod tests {
             .unwrap();
         assert_eq!(header_pixels(&webp_bytes), Some(24));
         assert_eq!(header_pixels(b"not an image"), None);
+    }
+
+    #[test]
+    fn lossy_png_is_tried_for_png_sources_but_never_for_format_locked_files() {
+        let options = AnalysisOptions {
+            webp: false,
+            qualities: vec![75, 95],
+            ..Default::default()
+        };
+        let loose = resource("App/Resources/a.png", "png");
+        assert_eq!(
+            formats(&trials(&loose, true, &options, None).0)
+                .into_iter()
+                .filter(|(format, _)| *format == "png")
+                .collect::<Vec<_>>(),
+            [("png", None), ("png", Some(75)), ("png", Some(95))]
+        );
+        // Catalog renditions keep their name and format, so they qualify too.
+        let catalog = resource("App/Assets.xcassets/a.imageset/a.png", "png");
+        assert!(formats(&trials(&catalog, true, &options, None).0).contains(&("png", Some(95))));
+        // Quantizing a nine-patch would damage its marker pixels.
+        let nine = resource("app/src/main/res/drawable/a.9.png", "png");
+        assert_eq!(
+            formats(&trials(&nine, true, &options, Some(21)).0),
+            [("png", None)]
+        );
+        // Not a PNG source, or switched off.
+        let jpeg = resource("App/Resources/a.jpg", "jpeg");
+        assert!(
+            formats(&trials(&jpeg, false, &options, None).0)
+                .iter()
+                .all(|(f, _)| *f != "png")
+        );
+        let off = AnalysisOptions {
+            lossy_png: false,
+            ..options
+        };
+        assert_eq!(
+            formats(&trials(&loose, true, &off, None).0)
+                .into_iter()
+                .filter(|(format, _)| *format == "png")
+                .count(),
+            1
+        );
     }
 }

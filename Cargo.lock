@@ -365,6 +365,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "exoquant"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5048aeecde83b7455a63b44aa54da5321d6171cff2adb8a5959849e142e5e4aa"
+
+[[package]]
 name = "fast-ssim2"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -911,6 +917,7 @@ dependencies = [
  "anyhow",
  "clap",
  "crc32fast",
+ "exoquant",
  "fast-ssim2",
  "getrandom",
  "ignore",

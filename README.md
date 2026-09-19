@@ -11,6 +11,7 @@ Your files never leave your computer. Analysis never modifies your project.
 - **Analyze a whole project.** Asset catalogs, loose resources, Android `res/` and `assets/`. Git ignore rules are respected by default, including nested rules, negations and force-tracked files.
 - **See results while analysis runs.** Completed files appear immediately, largest first. Stop at any time; finished work is cached, so the next run continues where you left off.
 - **Optimize PNG without changing a pixel.** Decoded samples (including color under transparent pixels) and metadata chunks are verified before a candidate is offered.
+- **Compare lossy PNG candidates** on every platform: a reduced colour palette, typically 60–80% smaller, and still a PNG — no renames, no reference changes.
 - **Compare JPEG, HEIC and WebP candidates** at the encoder quality levels you choose (75, 85 and 95 by default), including same-format recompression of existing JPEG and WebP files. Lossless WebP candidates are verified sample-for-sample.
 - **Optimize and preview SVGA animations.** Embedded images are recompressed losslessly; every other byte of the animation and every pixel is verified unchanged. SVGA files are rendered, so you see a thumbnail and can play the animation frame by frame in the review page.
 - **Judge quality with evidence.** Side-by-side previews, a full-size comparison slider, SSIMULACRA2 perceptual scores, and RGB and Alpha error for every candidate.
@@ -57,6 +58,7 @@ resopt serve /path/to/report
 
 ```sh
 resopt web . --no-webp                  # skip WebP candidates (on by default for loose files and Android)
+resopt web . --no-lossy-png             # skip palette-reduced PNG candidates (on by default)
 resopt web . --png-reductions           # allow lossless PNG palette/bit-depth reductions
 resopt web . --qualities 85             # one quality level for a faster first pass
 resopt web . --min-score 90             # stricter perceptual threshold (default 80)
@@ -109,6 +111,7 @@ resopt package-diff before.apk after.apk      # also .aab, .ipa or any zip
 | Project inventory, Git ignore rules, duplicate detection | Yes | Yes |
 | PNG lossless optimization | Yes | Yes |
 | SVGA lossless optimization | Yes | Yes |
+| Lossy PNG candidates (palette reduction; `--no-lossy-png` to skip) | Yes | Yes |
 | WebP candidates, lossy and lossless (on by default; `--no-webp` to skip) | Yes | Yes¹ |
 | JPEG and HEIC candidates; decoding JPEG/HEIC/GIF/TIFF inputs | Yes (Apple ImageIO) | No |
 | Local review page, apply, batch, restore | Yes | Yes |
@@ -125,6 +128,8 @@ A browser-only edition (static site, WebAssembly) optimizes individual PNG files
 - Savings are **source-file bytes**. They are not IPA/APK size or store download size: Xcode compiles asset catalogs and AAPT2 re-compresses PNGs. Use `package-diff` on real builds to measure shipped size.
 - The inventory lists files on disk. It does not know which files a particular build target, flavor or variant includes.
 - A perceptual score helps you prioritize; it does not replace looking at the image, especially for UI art with fine edges.
+- Lossy PNG uses at most 256 palette colours without dithering. Images with soft transparency usually exceed the default Alpha tolerance and are offered as warnings rather than recommendations; raise `--max-alpha-error` if that trade-off is acceptable for your artwork.
+- HEIC candidates are always lossy: Apple's encoder has no lossless mode (at quality 100, 2–17% of samples still change), so resopt does not offer a "lossless HEIC".
 - App icons, sliced (resizable) catalog images and animated images are inspected but never converted. Animated images are never flattened.
 - WebP is not offered for asset-catalog renditions.
 - Reference migration covers statically resolvable references. Names built at runtime, third-party decoders and references outside the scanned directory need your review; ambiguous references block the change instead of guessing.

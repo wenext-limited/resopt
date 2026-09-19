@@ -3,6 +3,7 @@
 ## Unreleased
 
 ### Added
+- **Lossy PNG candidates** (on by default, `--no-lossy-png` to skip): PNG sources are also reduced to a 256/128/64-colour palette at qualities 95/85/75. The file stays a PNG, so names, references, asset catalogs and Android resources are unaffected, and it works on every platform. They are judged like any lossy candidate (perceptual score, Alpha error, explicit approval) and never applied by the default lossless batch policy. Nine-patch, launcher-icon and `res/raw` files are never quantized. On large translucent artwork, expect them to appear as Alpha warnings: a 256-entry palette cannot keep every alpha level within the default 1/255 tolerance.
 - **SVGA previews and playback.** SVGA files now render: every SVGA row gets a poster thumbnail plus its canvas size, frame rate and frame count, and a live session plays the animation frame by frame with a scrubber. Rendering follows the reference players (bitmap sprites, transforms, clip paths, matte layers, vector shapes and `keep` frames). A file that cannot be rendered is still optimized; the row says why there is no picture.
 
 ### Changed
