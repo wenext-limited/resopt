@@ -64,3 +64,50 @@ function vapPlayer(r) {
   }).catch(fail); else fail();
   return box;
 }
+
+// The SDK lives in an opaque-origin sandbox. Only buffers and playback messages cross it.
+function pagPlayer(r) {
+  const box = el('section', 'effect-player'); box.setAttribute('aria-label', t('pagPlayer'));
+  const facts = el('p', 'hint', t('pagDetected', String(r.resource.extension).toUpperCase())), stage = el('div', 'effect-stage'), frame = el('iframe');
+  frame.title = t('pagPlayer'); frame.setAttribute('sandbox', 'allow-scripts'); frame.referrerPolicy = 'no-referrer';
+  const controls = el('div', 'effect-controls'), toggle = el('button', '', t('animPlay')), slider = el('input'), label = el('span', 'hint');
+  toggle.type = 'button'; toggle.disabled = true; slider.type = 'range'; slider.min = '0'; slider.max = '1'; slider.step = '1'; slider.value = '0'; slider.disabled = true; slider.setAttribute('aria-label', t('effectTimeline'));
+  const status = el('p', 'hint', t('effectLoading')), license = el('a', 'link-button', t('pagLicense')); license.href = 'previews/0-libpag-license.txt'; license.target = '_blank'; license.rel = 'noopener';
+  stage.append(frame); controls.append(toggle, slider, label); box.append(facts, stage, controls, status, license);
+  let disposed = false, frames = 1, initialized = false;
+  const request = new AbortController();
+  const fail = () => { if (!disposed) { status.textContent = t('pagUnavailable'); toggle.disabled = slider.disabled = true; } };
+  const send = message => frame.contentWindow?.postMessage(message, '*');
+  const load = async () => {
+    if (initialized || disposed) return; initialized = true;
+    if (r.pag.runtime_version !== '4.3.51') return fail();
+    const src = assetUrl(r.original_artifact); if (!src) return fail();
+    const read = async (path, max) => {
+      const response = await fetch(path, { signal: request.signal }); if (!response.ok) throw new Error('Missing artifact');
+      const buffer = await response.arrayBuffer(); if (buffer.byteLength > max) throw new Error('Preview size limit'); return buffer;
+    };
+    try {
+      const [source, wasm] = await Promise.all([read(src, 16 * 1024 * 1024), read('previews/0-libpag-4.3.51.wasm', 4 * 1024 * 1024)]);
+      if (!disposed) frame.contentWindow.postMessage({ type: 'resopt-pag-init', source, wasm }, '*', [source, wasm]);
+    } catch { fail(); }
+  };
+  const receive = event => {
+    if (disposed || event.source !== frame.contentWindow || event.origin !== 'null') return;
+    const data = event.data; if (!data || typeof data !== 'object') return;
+    if (data.type === 'resopt-pag-loaded') void load();
+    else if (data.type === 'resopt-pag-ready') {
+      if (![data.width, data.height, data.frames, data.texts, data.images, data.videos].every(Number.isSafeInteger) || !Number.isFinite(data.fps) || data.frames < 1 || data.frames > 432000) return fail();
+      frames = data.frames; slider.max = String(frames - 1); toggle.disabled = slider.disabled = false;
+      facts.textContent = `${t('animInfo', count(data.width), count(data.height), data.fps, count(frames))} · ${t('pagContents', count(data.texts), count(data.images), count(data.videos))}`;
+      status.textContent = t('pagPreviewNote');
+    } else if (data.type === 'resopt-pag-progress' && Number.isInteger(data.frame) && data.frame >= 0 && data.frame < frames) {
+      slider.value = String(data.frame); label.textContent = t('animFrame', data.frame + 1, frames); toggle.textContent = t(data.playing ? 'animPause' : 'animPlay');
+    } else if (data.type === 'resopt-pag-error') fail();
+  };
+  window.addEventListener('message', receive);
+  effectCleanup = () => { disposed = true; request.abort(); window.removeEventListener('message', receive); send({ type: 'resopt-pag-dispose' }); frame.remove(); };
+  toggle.addEventListener('click', () => send({ type: 'resopt-pag-toggle' }));
+  slider.addEventListener('input', () => send({ type: 'resopt-pag-seek', frame: Number(slider.value) }));
+  frame.addEventListener('error', fail); frame.src = 'previews/0-pag-player.html';
+  return box;
+}

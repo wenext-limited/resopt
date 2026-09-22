@@ -217,6 +217,8 @@ pub struct ResourceAnalysis {
     pub archive: Option<crate::archive::ArchiveInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vap: Option<crate::vap::VapInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pag: Option<crate::pag::PagInfo>,
     /// Canvas, timing and size of an animation, when it could be parsed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub animation: Option<AnimationInfo>,
@@ -241,6 +243,7 @@ impl ResourceAnalysis {
             media: None,
             archive: None,
             vap: None,
+            pag: None,
             animation: None,
         }
     }
@@ -407,6 +410,13 @@ pub(crate) fn analyze_with_observer(
     for folder in ["candidates", "previews", "originals"] {
         fs::create_dir(out.join(folder))?;
     }
+    if inventory
+        .assets
+        .iter()
+        .any(|r| matches!(r.format.as_str(), "pag" | "tcmp4"))
+    {
+        crate::pag::write_runtime(&out)?;
+    }
     let cache = options
         .cache_dir
         .as_ref()
@@ -447,7 +457,10 @@ pub(crate) fn analyze_with_observer(
     let (mut work, settled): (Vec<usize>, Vec<usize>) = (0..total).partition(|&index| {
         let resource = &inventory.assets[index];
         resource.support == "optimizable"
-            || matches!(resource.format.as_str(), "zip" | "mp4" | "vap")
+            || matches!(
+                resource.format.as_str(),
+                "zip" | "mp4" | "vap" | "pag" | "tcmp4"
+            )
             || (resource.kind == "image" && options.probe_only)
             || (is_media(resource) && crate::media::ffprobe_available())
     });
@@ -487,6 +500,27 @@ pub(crate) fn analyze_with_observer(
                 return failed;
             }
         };
+        if matches!(resource.format.as_str(), "pag" | "tcmp4") {
+            let mut row = ResourceAnalysis::new(resource, "inspected");
+            row.sha256 = Some(digest);
+            match crate::pag::inspect(&bytes) {
+                Ok(info) => {
+                    row.resource.kind = "animation".into();
+                    row.resource.format = "pag".into();
+                    let artifact = PathBuf::from(format!("originals/{index}.pag"));
+                    match write_new(&out.join(&artifact), &bytes) {
+                        Ok(()) => row.original_artifact = Some(artifact),
+                        Err(error) => row.issues.push(format!("preview_unavailable: {error:#}")),
+                    }
+                    row.pag = Some(info);
+                }
+                Err(error) => {
+                    row.status = "failed".into();
+                    row.issues.push(format!("{error:#}"));
+                }
+            }
+            return row;
+        }
         if matches!(resource.format.as_str(), "mp4" | "vap") {
             let mut row = settled_row(resource);
             row.sha256 = Some(digest);

@@ -413,6 +413,7 @@ mod tests {
             media: None,
             archive: None,
             vap: None,
+            pag: None,
             animation: None,
         }
     }

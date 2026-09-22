@@ -263,6 +263,9 @@ fn looks_like_lottie(header: &[u8]) -> bool {
 }
 
 pub(crate) fn actual_format(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.starts_with(b"PAG") {
+        return Some("pag");
+    }
     if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
         return Some("png");
     }

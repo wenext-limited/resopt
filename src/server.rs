@@ -643,10 +643,23 @@ fn serve_artifact(request: Request, app: &App, route: &str) {
         Some("webp") => "image/webp",
         Some("json") => "application/json",
         Some("mp4") => "video/mp4",
+        Some("html") => "text/html; charset=utf-8",
+        Some("wasm") => "application/wasm",
+        Some("txt") => "text/plain",
         _ => "application/octet-stream",
     };
     match contained_file(&app.directory, &relative).and_then(|p| crate::resources::bounded_read(&p))
     {
+        Ok(bytes) if relative == Path::new(crate::pag::RUNTIME_FRAME) => respond_with(
+            request,
+            200,
+            media,
+            bytes,
+            &[(
+                "Content-Security-Policy",
+                "default-src 'none'; script-src 'unsafe-inline' 'unsafe-eval'; style-src 'unsafe-inline'; img-src blob: data:; media-src blob:; connect-src 'none'; sandbox allow-scripts; frame-ancestors 'self'; base-uri 'none'; form-action 'none'",
+            )],
+        ),
         Ok(bytes) => respond(request, 200, media, bytes),
         Err(_) => respond(request, 404, "text/plain", b"Artifact unavailable".to_vec()),
     }
@@ -674,7 +687,7 @@ fn respond_with(request: Request, code: u16, media: &str, bytes: Vec<u8>, extra:
         ("Cross-Origin-Resource-Policy", "same-origin"),
         (
             "Content-Security-Policy",
-            "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+            "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'; frame-src 'self'; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
         ),
     ]
     .into_iter()
