@@ -212,6 +212,9 @@ pub struct ResourceAnalysis {
     /// Codec, duration and bitrate of audio/video files, when ffprobe is installed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub media: Option<crate::media::MediaInfo>,
+    /// Bounded ZIP contents; entries are never extracted into the project.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub archive: Option<crate::archive::ArchiveInfo>,
     /// Canvas, timing and size of an animation, when it could be parsed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub animation: Option<AnimationInfo>,
@@ -234,6 +237,7 @@ impl ResourceAnalysis {
             original_artifact: None,
             fingerprint: None,
             media: None,
+            archive: None,
             animation: None,
         }
     }
@@ -440,6 +444,7 @@ pub(crate) fn analyze_with_observer(
     let (mut work, settled): (Vec<usize>, Vec<usize>) = (0..total).partition(|&index| {
         let resource = &inventory.assets[index];
         resource.support == "optimizable"
+            || resource.format == "zip"
             || (resource.kind == "image" && options.probe_only)
             || (is_media(resource) && crate::media::ffprobe_available())
     });
@@ -479,6 +484,10 @@ pub(crate) fn analyze_with_observer(
                 return failed;
             }
         };
+        // Archive previews have their own entry paths; do not reuse image-cache manifests.
+        if resource.format == "zip" {
+            return crate::archive::analyze(&context, resource, index, &bytes, &digest);
+        }
         let compute = |own_index: usize| {
             #[cfg(target_os = "macos")]
             {

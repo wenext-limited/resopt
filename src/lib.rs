@@ -11,6 +11,10 @@ mod aapt;
 #[cfg(feature = "native")]
 mod analysis;
 #[cfg(feature = "native")]
+mod archive;
+#[cfg(feature = "native")]
+pub use archive::{ArchiveEntry, ArchiveInfo};
+#[cfg(feature = "native")]
 mod media;
 #[cfg(feature = "native")]
 pub use media::MediaInfo;

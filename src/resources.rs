@@ -328,7 +328,7 @@ fn extension_format(extension: &str) -> &str {
     }
 }
 
-fn kind(format: &str) -> &'static str {
+pub(crate) fn kind(format: &str) -> &'static str {
     match format {
         "png" | "jpeg" | "heic" | "heif" | "webp" | "gif" | "tiff" | "bmp" | "avif" | "jxl"
         | "ico" | "icns" | "psd" => "image",

@@ -411,6 +411,7 @@ mod tests {
             original_artifact: Some(format!("originals/{index}.png").into()),
             fingerprint: None,
             media: None,
+            archive: None,
             animation: None,
         }
     }

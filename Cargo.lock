@@ -912,6 +912,7 @@ dependencies = [
  "clap",
  "crc32fast",
  "fast-ssim2",
+ "flate2",
  "getrandom",
  "ignore",
  "maud",
@@ -935,6 +936,7 @@ dependencies = [
  "walkdir",
  "webp",
  "xcassets",
+ "zip",
 ]
 
 [[package]]

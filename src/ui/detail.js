@@ -52,6 +52,7 @@ function renderDetail() {
   if (r.media) facts.append(el('span', '', t('mediaInfo', r.media.streams.join(' + '), r.media.duration_seconds?.toFixed(1) ?? '—', r.media.bit_rate ? Math.round(r.media.bit_rate / 1000) : '—')));
   if (r.resource?.extension_mismatch) facts.append(el('span', 'status-warn', t('mismatch')));
   pane.append(facts);
+  if (r.archive) pane.append(archiveBlock(r));
   const android = r.resource?.android;
   if (android) pane.append(el('p', 'android-note', `${t('android')}: ${t('androidInfo', android.area, android.res_type || '—', android.name || '—', android.qualifiers?.length ? android.qualifiers.join('-') : '—')}`));
   if (r.animation) pane.append(animationPlayer(r));

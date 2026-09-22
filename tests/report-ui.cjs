@@ -5,7 +5,7 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const ui = name => fs.readFileSync(path.join(__dirname, '../src/ui', name), 'utf8');
-const FILES = ['core.js', 'i18n.js', 'app.js', 'compare.js', 'detail.js', 'batch.js'];
+const FILES = ['core.js', 'i18n.js', 'app.js', 'compare.js', 'detail.js', 'archive.js', 'batch.js'];
 const api = vm.runInNewContext(`${ui('core.js')}\n${ui('i18n.js')}
 ({similarGroupRows, differencePixels, formatSize, assetUrl, warningKind, warningKinds, blockedReason, recommendedSavings, hasWarningCandidate, displayableInBrowser, pickLocale, translate, issueText, MESSAGES})`);
 
