@@ -30,6 +30,13 @@ function renderDetail() {
   const pane = $('inspector'); pane.replaceChildren();
   const r = state.selected;
   if (!r) { const empty = el('div', 'empty'); empty.append(el('strong', '', t('select')), el('span', '', t('selectHint'))); pane.append(empty); return; }
+  const group = similarityGroup(r);
+  if (group && state.mode === 'duplicates') {
+    const rank = duplicateGroups().get(indexOf(r));
+    pane.append(el('h1', 'group-heading', `${t('dupGroup', rank + 1)} · ${t('dupImageCount', count(group.members.length))}`));
+    const selected = group.members.includes(state.groupMember) ? state.records[state.groupMember] : r;
+    pane.append(duplicateBlock(selected, group)); pane.scrollTop = 0; return;
+  }
   renderMultiSelection(pane);
   const variants = Array.isArray(r.candidates) ? r.candidates : [], c = variants[state.chosen] || null;
   const heading = el('div', 'detail-heading'), title = el('div');
@@ -82,7 +89,6 @@ function renderDetail() {
     renderActions(pane, r, c);
     pane.append(candidateTable(r, variants));
   }
-  const group = (state.meta?.similarGroups || [])[duplicateGroups().get(indexOf(r))];
   if (group) pane.append(duplicateBlock(r, group));
   if (r.issues?.length) pane.append(el('div', 'reasons', r.issues.map(i => issueText(locale, i)).join('; ')));
   const notes = el('details'), options = state.meta?.options || {};
@@ -129,15 +135,39 @@ function animationPlayer(r) {
   return box;
 }
 
+function duplicateScore(group, index) {
+  const comparison = group.comparisons?.[group.members.indexOf(index)];
+  if (!comparison || !Number.isFinite(comparison.score)) return t('dupUnscored');
+  return comparison.identical ? t('dupExactScore') : t('dupScore', Math.min(99.9, Math.max(0, comparison.score)).toFixed(1));
+}
+
 function duplicateBlock(r, group) {
   const block = el('section', 'duplicate-block'); block.setAttribute('aria-label', t(`dup_${group.kind}`));
-  block.append(el('strong', '', t(`dup_${group.kind}`)), el('span', 'hint', t('dupRedundant', count(group.members.length), size(group.redundant_bytes))));
-  const list = el('ul', 'batch-list');
-  for (const index of group.members) {
+  block.append(el('strong', '', t(`dup_${group.kind}`)), el('span', 'hint', t('dupRedundant', count(group.members.length), size(group.redundant_bytes))), el('p', 'hint', t('dupScoreHint')));
+  const list = el('div', 'duplicate-grid');
+  for (const [position, index] of group.members.entries()) {
     const member = state.records[index]; if (!member) continue;
-    const item = el('li'), open = el('button', 'link-button path', pathText(member)); open.type = 'button'; open.disabled = member === r;
-    open.addEventListener('click', () => { if (!state.filtered.includes(member)) { state.mode = 'duplicates'; refresh(true); } state.page = Math.floor(state.filtered.indexOf(member) / PAGE_SIZE); renderList(); selectRecord(member); });
-    item.append(open, el('span', '', member.image ? `${count(member.image.width)} × ${count(member.image.height)}` : ''), sizeNode(member.resource?.bytes, 'number')); list.append(item);
+    const item = el('div', 'duplicate-card'); item.dataset.active = String(member === r);
+    const comparison = group.comparisons?.[position];
+    item.append(el('strong', 'duplicate-score', position === 0 ? t('dupReference') : duplicateScore(group, index)));
+    const src = assetUrl(member.original_preview), preview = el('div', 'duplicate-preview'); preview.dataset.background = state.background;
+    if (src) {
+      const img = el('img'); img.src = src; img.alt = basename(pathText(member)); img.loading = 'lazy'; img.decoding = 'async';
+      const raw = assetUrl(member.original_artifact) || (state.token && member.image ? `source/${index}` : null);
+      const link = el('a'); link.href = raw || src; link.target = '_blank'; link.rel = 'noopener'; link.title = t(raw ? 'openFull' : 'dupOpenPreview'); link.append(img); preview.append(link);
+    } else preview.append(el('span', 'hint', t('dupNoPreview')));
+    const open = el('button', 'link-button path', pathText(member)); open.type = 'button'; open.disabled = member === r;
+    open.addEventListener('click', () => {
+      if (state.mode === 'duplicates') { state.groupMember = index; renderDetail(); return; }
+      if (!state.filtered.includes(member)) { state.mode = 'all'; $('search').value = ''; $('format-filter').value = 'all'; refresh(true); }
+      state.page = Math.floor(state.filtered.indexOf(member) / PAGE_SIZE); renderList(); selectRecord(member);
+    });
+    item.append(preview, open, el('span', 'hint', `${member.image ? `${count(member.image.width)} × ${count(member.image.height)} · ` : ''}${size(member.resource?.bytes)}`));
+    if (position > 0 && comparison && !comparison.identical) {
+      const percent = value => `${(100 * value).toFixed(2)}%`;
+      item.append(el('span', 'hint', t('dupDifferences', percent(comparison.brightness_difference), percent(comparison.opacity_difference), percent(comparison.color_difference), percent(comparison.max_cell_difference))));
+    }
+    list.append(item);
   }
   block.append(list, el('p', 'hint', t('dupHint'))); return block;
 }

@@ -141,7 +141,7 @@ function renderSummary() {
   setStat('stat-applied', size(applied), t('exactBytes', count(applied)));
   const options = state.meta?.options;
   $('scope-note').textContent = options ? t('scope', size(rows.reduce((n, r) => n + (r.resource?.bytes || 0), 0)), (options.qualities || []).join(' / '), options.min_score ?? '—') : '';
-  const modes = { candidates: opportunities.length, warnings: rows.filter(hasWarningCandidate).length, duplicates: duplicateGroups().size, applied: rows.filter(isApplied).length,
+  const modes = { candidates: opportunities.length, warnings: rows.filter(hasWarningCandidate).length, duplicates: (state.meta?.similarGroups || []).length, applied: rows.filter(isApplied).length,
     images: rows.filter(r => r.resource?.kind === 'image').length, unsupported: rows.filter(r => ['unsupported', 'inventory_only'].includes(r.status)).length,
     failed: rows.filter(r => r.status === 'failed').length, all: rows.length };
   for (const [mode, value] of Object.entries(modes)) $(`mode-${mode}`).textContent = count(value);
@@ -151,7 +151,7 @@ function renderSummary() {
     select.replaceChildren(Object.assign(el('option', '', t('allFormats')), { value: 'all' }), ...formats.map(f => Object.assign(el('option', '', f.toUpperCase()), { value: f })));
     select.value = formats.includes(current) ? current : 'all';
   }
-  const live = !!state.token && state.phase === 'ready';
+  const live = !!state.token && state.phase === 'ready' && state.mode !== 'duplicates';
   const selectedApplied = selectedAppliedResources().length;
   $('batch-open').hidden = !live; $('restore-all-open').hidden = !live;
   $('restore-selected-open').hidden = !live || state.selectedRecords.size <= 1 || !selectedApplied;
@@ -167,6 +167,18 @@ function duplicateGroups() {
   if (state.groupSource !== groups) { state.groupSource = groups; state.groupOf = new Map(); groups.forEach((g, rank) => g.members.forEach(i => state.groupOf.set(i, rank))); }
   return state.groupOf;
 }
+function similarityGroup(r) { return state.meta?.similarGroups?.[duplicateGroups().get(indexOf(r))]; }
+function groupScoreRange(group) {
+  const comparisons = group.comparisons?.slice(1);
+  if (!comparisons?.length || comparisons.length !== group.members.length - 1 || comparisons.some(c => !Number.isFinite(c.score))) return null;
+  const scores = comparisons.map(c => c.identical ? 100 : Math.min(99.9, Math.max(0, c.score)));
+  return [Math.min(...scores), Math.max(...scores)];
+}
+function groupBytes(group) { return group.members.reduce((total, index) => total + (state.records[index]?.resource?.bytes || 0), 0); }
+function groupScoreText(group) {
+  const range = groupScoreRange(group);
+  return range ? `${range[0].toFixed(1)}${range[0].toFixed(1) === range[1].toFixed(1) ? '' : `–${range[1].toFixed(1)}`}` : '—';
+}
 const MODE_FILTERS = {
   candidates: r => recommendedSavings(r) > 0, warnings: hasWarningCandidate, duplicates: r => duplicateGroups().has(indexOf(r)), applied: isApplied,
   images: r => r.resource?.kind === 'image', unsupported: r => ['unsupported', 'inventory_only'].includes(r.status),
@@ -177,11 +189,20 @@ function applyFilters() {
   const format = $('format-filter').value, sort = $('sort').value;
   state.filtered = state.records.filter(r => r && MODE_FILTERS[state.mode](r) && (format === 'all' || r.resource?.format === format)
     && query.every(q => `${pathText(r)} ${r.resource?.format} ${r.resource?.kind}`.toLocaleLowerCase().includes(q)));
+  if (state.mode === 'duplicates') {
+    state.filtered = similarGroupRows(state.records, state.meta?.similarGroups || [], new Set(state.filtered.map(indexOf)));
+    const byGroup = {
+      savings: (a, b) => similarityGroup(b).redundant_bytes - similarityGroup(a).redundant_bytes,
+      size: (a, b) => groupBytes(similarityGroup(b)) - groupBytes(similarityGroup(a)),
+      name: (a, b) => basename(pathText(a)).localeCompare(basename(pathText(b))),
+      score: (a, b) => (groupScoreRange(similarityGroup(a))?.[0] ?? -1) - (groupScoreRange(similarityGroup(b))?.[0] ?? -1),
+    }[sort];
+    state.filtered.sort((a, b) => byGroup(a, b) || duplicateGroups().get(indexOf(a)) - duplicateGroups().get(indexOf(b)));
+    return;
+  }
   const by = { savings: (a, b) => recommendedSavings(b) - recommendedSavings(a), size: (a, b) => (b.resource?.bytes || 0) - (a.resource?.bytes || 0),
     name: (a, b) => basename(pathText(a)).localeCompare(basename(pathText(b))), score: (a, b) => lowestScore(a) - lowestScore(b) }[sort];
-  // Members of one duplicate group stay adjacent, largest group first.
-  const rank = state.mode === 'duplicates' ? (a, b) => duplicateGroups().get(indexOf(a)) - duplicateGroups().get(indexOf(b)) : () => 0;
-  state.filtered.sort((a, b) => rank(a, b) || by(a, b) || pathText(a).localeCompare(pathText(b)));
+  state.filtered.sort((a, b) => by(a, b) || pathText(a).localeCompare(pathText(b)));
 }
 // `reset` moves to the first page and selection; live updates keep the user's place.
 function refresh(reset) {
@@ -196,6 +217,7 @@ function refresh(reset) {
     state.selected = state.filtered.find(r => state.selectedRecords.has(r)) || state.selected;
     state.chosen = preferredCandidate(state.selected);
   }
+  if (state.mode === 'duplicates') state.selectedRecords = new Set(state.selected ? [state.selected] : []);
   if (reset && state.selected) state.chosen = preferredCandidate(state.selected);
   if (!state.filtered.includes(state.selectionAnchor)) state.selectionAnchor = state.selected;
   document.querySelectorAll('.mode').forEach(b => { const on = b.dataset.mode === state.mode; b.classList.toggle('active', on); b.setAttribute('aria-pressed', String(on)); });
@@ -216,6 +238,10 @@ function preferredCandidate(r) {
   return warning >= 0 ? warning : (r.candidates?.length ? 0 : null);
 }
 function renderList() {
+  document.querySelector('.list-head [data-i18n="colResource"]').textContent = t(state.mode === 'duplicates' ? 'dupGroups' : 'colResource');
+  document.querySelector('.list-head [data-i18n="colSize"]').textContent = t(state.mode === 'duplicates' ? 'dupTotalSize' : 'colSize');
+  $('sort').querySelector('[value="savings"]').textContent = t(state.mode === 'duplicates' ? 'dupSortGroup' : 'sortSavings');
+  document.querySelector('.list-head [data-i18n="colSavings"]').textContent = t(state.mode === 'duplicates' ? 'dupSimilarity' : 'colSavings');
   const list = $('results'); const focused = document.activeElement?.dataset?.index; list.replaceChildren();
   const start = state.page * PAGE_SIZE, items = state.filtered.slice(start, start + PAGE_SIZE);
   if (!items.length) {
@@ -245,7 +271,24 @@ function renderList() {
     else if (saved) cell.append(sizeNode(saved), el('small', '', `−${formatPercent(saved / (r.resource.bytes || 1))}`));
     else if (hasWarningCandidate(r)) cell.append(el('span', 'badge warn', t('modeWarnings')));
     else cell.append(el('span', '', '—'));
-    row.append(identity, sizeNode(r.resource?.bytes, 'number'), cell);
+    if (state.mode === 'duplicates') {
+      const group = similarityGroup(r), rank = duplicateGroups().get(indexOf(r));
+      row.classList.add('similar-group-row'); row.dataset.optimized = 'false';
+      row.title = group.members.map(index => pathText(state.records[index])).join('\n');
+      const summary = el('span', 'group-summary');
+      summary.append(el('strong', '', `${t('dupGroup', rank + 1)} · ${t('dupImageCount', count(group.members.length))}`), el('span', 'hint', t(`dup_${group.kind}`)));
+      const previews = el('span', 'group-thumbs');
+      for (const index of group.members.slice(0, 4)) {
+        const member = state.records[index], src = assetUrl(member?.original_preview), tile = el('span', 'thumb');
+        if (src) { const img = el('img'); img.src = src; img.alt = ''; img.loading = 'lazy'; img.decoding = 'async'; tile.append(img); }
+        else tile.textContent = String(member?.resource?.format || '—').toUpperCase();
+        previews.append(tile);
+      }
+      if (group.members.length > 4) previews.append(el('span', 'hint', `+${count(group.members.length - 4)}`));
+      summary.append(previews, el('span', 'file-context', t('dupReferenceName', basename(pathText(r)))));
+      const score = el('span', 'number group-score', groupScoreText(group)); score.append(el('small', '', '/ 100')); score.title = t('dupRangeHint');
+      row.append(summary, sizeNode(groupBytes(group), 'number'), score);
+    } else row.append(identity, sizeNode(r.resource?.bytes, 'number'), cell);
     row.addEventListener('click', event => { selectRecord(r, event); if (window.matchMedia('(max-width: 760px)').matches) $('inspector').scrollIntoView({ block: 'start', behavior: reducedMotion() ? 'instant' : 'smooth' }); });
     row.addEventListener('keydown', event => {
       const move = { ArrowDown: 1, ArrowUp: -1 }[event.key]; if (!move) return;
@@ -262,6 +305,7 @@ function renderList() {
 }
 function renderListRange() {
   const total = state.filtered.length, start = state.page * PAGE_SIZE;
+  if (state.mode === 'duplicates') { $('range').textContent = total ? t('dupGroupRange', count(start + 1), count(Math.min(start + PAGE_SIZE, total)), count(total)) : t('none'); return; }
   $('range').textContent = `${total ? t('range', count(start + 1), count(Math.min(start + PAGE_SIZE, total)), count(total)) : t('none')} · ${t('selectedCount', count(state.selectedRecords.size))}`;
 }
 function operationStatus(kind, symbol, label) {
@@ -269,6 +313,7 @@ function operationStatus(kind, symbol, label) {
   icon.setAttribute('aria-hidden', 'true'); status.append(icon, el('span', '', label)); return status;
 }
 function selectRecord(r, event = {}) {
+  if (state.mode === 'duplicates') { event = {}; state.groupMember = null; }
   const result = selectionAfterClick(state.selectedRecords, state.selectionAnchor, r, state.filtered, !!event.shiftKey, !!event.altKey);
   state.selectedRecords = result.records; state.selectionAnchor = result.anchor;
   state.selected = state.selectedRecords.has(r) ? r : state.filtered.find(item => state.selectedRecords.has(item)) || r;

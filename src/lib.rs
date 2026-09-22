@@ -44,7 +44,7 @@ mod catalog;
 #[cfg(feature = "native")]
 mod similarity;
 #[cfg(feature = "native")]
-pub use similarity::{Fingerprint, SimilarGroup};
+pub use similarity::{Fingerprint, SimilarComparison, SimilarGroup};
 #[cfg(feature = "native")]
 mod svga;
 #[cfg(feature = "native")]

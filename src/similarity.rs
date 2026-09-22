@@ -13,16 +13,13 @@
 //! because removing a file means changing the code that names it.
 use crate::{ResourceAnalysis, image_backend::Decoded};
 use serde::{Deserialize, Serialize};
-use std::{
-    collections::BTreeMap,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
 const GRID: usize = 16;
 /// Largest mean absolute grid difference (0–1) still called the same picture.
 const MAX_LUMA_DISTANCE: f32 = 0.022;
 const MAX_ALPHA_DISTANCE: f32 = 0.03;
-/// No single grid cell may differ by more than this.
+/// No single luminance or alpha grid cell may differ by more than this.
 const MAX_CELL_DISTANCE: f32 = 0.16;
 /// Largest per-channel mean color difference on a 0–255 scale.
 const MAX_COLOR_DISTANCE: i32 = 14;
@@ -46,13 +43,32 @@ pub struct Fingerprint {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SimilarGroup {
-    /// `identical` (same bytes), `resized` (same picture, different
+    /// `identical` (same bytes), `resized` (similar fingerprint, different
     /// dimensions) or `similar` (near-duplicate).
     pub kind: String,
     /// Report indexes, largest file first.
     pub members: Vec<usize>,
-    /// Bytes beyond the largest member: what keeping one copy would save.
+    /// Comparisons to members[0], in member order (including the reference).
+    /// Empty in reports generated before similarity scores were introduced.
+    #[serde(default)]
+    pub comparisons: Vec<SimilarComparison>,
+    /// Bytes beyond the largest member; not guaranteed removable savings.
     pub redundant_bytes: u64,
+}
+
+/// A heuristic fingerprint comparison, not replacement safety or SSIMULACRA2.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SimilarComparison {
+    /// 0–100; only matching file hashes receive 100. Other matches cap at 99.9.
+    pub score: f32,
+    pub identical: bool,
+    /// Mean absolute luminance / alpha and largest mean RGB channel difference.
+    /// All differences are normalized to 0–1.
+    pub brightness_difference: f32,
+    pub opacity_difference: f32,
+    pub color_difference: f32,
+    /// Largest luminance or alpha cell difference; reveals localized changes.
+    pub max_cell_difference: f32,
 }
 
 /// Area-average one channel expression onto a GRID×GRID grid.
@@ -194,7 +210,38 @@ struct Entry {
     alpha: Vec<f32>,
     aspect: f64,
     dimensions: (usize, usize),
+    frames: usize,
     variant: PathBuf,
+}
+
+fn compare(a: &Entry, b: &Entry) -> SimilarComparison {
+    let identical = a.sha256.is_some() && a.sha256 == b.sha256;
+    let (brightness_difference, luma_peak) = distance(&a.luma, &b.luma);
+    let (opacity_difference, alpha_peak) = distance(&a.alpha, &b.alpha);
+    let color_difference = a
+        .print
+        .mean_rgb
+        .iter()
+        .zip(b.print.mean_rgb)
+        .map(|(x, y)| f32::from(x.abs_diff(y)) / 255.0)
+        .fold(0.0_f32, f32::max);
+    // Use the worst average channel, so opacity or tint differences cannot be
+    // diluted by the other channels. Peak differences remain separately visible.
+    let difference = brightness_difference
+        .max(opacity_difference)
+        .max(color_difference);
+    SimilarComparison {
+        score: if identical {
+            100.0
+        } else {
+            (100.0 * (1.0 - difference)).clamp(0.0, 99.9)
+        },
+        identical,
+        brightness_difference,
+        opacity_difference,
+        color_difference,
+        max_cell_difference: luma_peak.max(alpha_peak),
+    }
 }
 
 fn alike(a: &Entry, b: &Entry) -> bool {
@@ -204,25 +251,25 @@ fn alike(a: &Entry, b: &Entry) -> bool {
     if a.sha256.is_some() && a.sha256 == b.sha256 {
         return true;
     }
-    a.print.detailed
+    a.frames == 1
+        && b.frames == 1
+        && a.print.detailed
         && b.print.detailed
         && (a.aspect - b.aspect).abs() <= MAX_ASPECT_DIFFERENCE * a.aspect.max(b.aspect)
         // Cheapest checks first: this runs for every pair of images.
-        && a.print
-            .mean_rgb
-            .iter()
-            .zip(b.print.mean_rgb)
+        && a.print.mean_rgb.iter().zip(b.print.mean_rgb)
             .all(|(x, y)| (i32::from(*x) - i32::from(y)).abs() <= MAX_COLOR_DISTANCE)
         && {
-            let (mean, worst) = distance(&a.luma, &b.luma);
-            mean <= MAX_LUMA_DISTANCE && worst <= MAX_CELL_DISTANCE
+            let metrics = compare(a, b);
+            metrics.brightness_difference <= MAX_LUMA_DISTANCE
+                && metrics.opacity_difference <= MAX_ALPHA_DISTANCE
+                && metrics.max_cell_difference <= MAX_CELL_DISTANCE
         }
-        && distance(&a.alpha, &b.alpha).0 <= MAX_ALPHA_DISTANCE
 }
 
 /// Group analyzed images that show the same picture.
 pub(crate) fn group(resources: &[ResourceAnalysis]) -> Vec<SimilarGroup> {
-    let entries: Vec<Entry> = resources
+    let mut entries: Vec<Entry> = resources
         .iter()
         .enumerate()
         .filter_map(|(index, resource)| {
@@ -236,38 +283,36 @@ pub(crate) fn group(resources: &[ResourceAnalysis]) -> Vec<SimilarGroup> {
                 alpha: decode(&print.alpha)?,
                 aspect: image.width as f64 / image.height.max(1) as f64,
                 dimensions: (image.width, image.height),
+                frames: image.frames,
                 variant: variant_key(&resource.resource.path),
                 print,
             })
         })
         .collect();
-    // Union-find over pairwise matches; the color check rejects most of the
-    // few million pairs before any grid is compared.
-    let mut parent: Vec<usize> = (0..entries.len()).collect();
-    fn find(parent: &mut [usize], mut node: usize) -> usize {
-        while parent[node] != node {
-            parent[node] = parent[parent[node]];
-            node = parent[node];
-        }
-        node
-    }
+    // A fixed, largest-file reference makes every score interpretable. Do not
+    // union transitive A~B~C matches: C must match A directly to join A's group.
+    // This is deterministic and O(n²) without storing an O(n²) matrix.
+    entries.sort_by(|a, b| b.bytes.cmp(&a.bytes).then(a.index.cmp(&b.index)));
+    let mut assigned = vec![false; entries.len()];
+    let mut clusters = Vec::new();
     for a in 0..entries.len() {
+        if assigned[a] {
+            continue;
+        }
+        let mut members = vec![&entries[a]];
         for b in a + 1..entries.len() {
-            if alike(&entries[a], &entries[b]) {
-                let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
-                parent[ra] = rb;
+            if !assigned[b] && alike(&entries[a], &entries[b]) {
+                assigned[b] = true;
+                members.push(&entries[b]);
             }
         }
-    }
-    let mut clusters: BTreeMap<usize, Vec<&Entry>> = BTreeMap::new();
-    for (position, entry) in entries.iter().enumerate() {
-        clusters
-            .entry(find(&mut parent, position))
-            .or_default()
-            .push(entry);
+        if members.len() > 1 {
+            assigned[a] = true;
+            clusters.push(members);
+        }
     }
     let mut groups: Vec<SimilarGroup> = clusters
-        .into_values()
+        .into_iter()
         .filter(|members| members.len() > 1)
         .map(|mut members| {
             members.sort_by(|a, b| b.bytes.cmp(&a.bytes).then(a.index.cmp(&b.index)));
@@ -288,6 +333,7 @@ pub(crate) fn group(resources: &[ResourceAnalysis]) -> Vec<SimilarGroup> {
                     "similar"
                 }
                 .into(),
+                comparisons: members.iter().map(|m| compare(first, m)).collect(),
                 redundant_bytes: members.iter().skip(1).map(|m| m.bytes).sum(),
                 members: members.iter().map(|m| m.index).collect(),
             }
@@ -443,6 +489,97 @@ mod tests {
             "a",
         ));
         assert_eq!(group(&with_copy).len(), 1);
+    }
+
+    #[test]
+    fn scores_distinguish_exact_reencoded_and_small_tint_changes() {
+        let base = picture(128, 128, badge([0.9, 0.2, 0.2]));
+        let slight = picture(128, 128, badge([0.89, 0.2, 0.2]));
+        let stronger = picture(128, 128, badge([0.86, 0.2, 0.2]));
+        let rows = vec![
+            row("a/base.png", &base, "a"),
+            row("b/exact.png", &base, "a"),
+            row("c/reencoded.png", &base, "b"),
+            row("d/slight.png", &slight, "c"),
+            row("e/stronger.png", &stronger, "d"),
+        ];
+        let groups = group(&rows);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].members, vec![0, 1, 2, 3, 4]);
+        let scores: Vec<_> = groups[0].comparisons.iter().map(|m| m.score).collect();
+        assert_eq!(scores[1], 100.0);
+        assert_eq!(scores[2], 99.9);
+        assert!(scores[2] > scores[3] && scores[3] > scores[4], "{scores:?}");
+        assert!(!groups[0].comparisons[2].identical);
+        println!(
+            "exact / reencoded / slight tint / stronger tint: {:?}",
+            &scores[1..]
+        );
+    }
+
+    #[test]
+    fn a_similarity_chain_cannot_claim_a_match_to_the_reference() {
+        // A~B and B~C pass the mean threshold, but A~C does not.
+        let image = picture(64, 64, badge([0.2, 0.5, 0.9]));
+        let rows: Vec<_> = [100, 105, 110]
+            .iter()
+            .enumerate()
+            .map(|(i, level)| {
+                let mut resource = row(&format!("{i}/image.png"), &image, &i.to_string());
+                resource.fingerprint.as_mut().unwrap().luma =
+                    format!("{level:02x}").repeat(GRID * GRID);
+                resource
+            })
+            .collect();
+        assert_eq!(group(&rows[..2])[0].members.len(), 2);
+        assert_eq!(group(&rows[1..])[0].members.len(), 2);
+        assert!(group(&[rows[0].clone(), rows[2].clone()]).is_empty());
+        let groups = group(&rows);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].members, vec![0, 1]);
+        assert_eq!(groups[0].comparisons.len(), 2);
+    }
+
+    #[test]
+    fn a_local_opacity_change_is_not_hidden_by_the_average() {
+        let image = picture(64, 64, |x, y| [x, y, 0.5, 1.0]);
+        let base = row("a/base.png", &image, "a");
+        let mut changed = row("b/changed.png", &image, "b");
+        // One cell becomes transparent. Its mean error is only 1/256.
+        // Keep luma fixed to isolate (ablate) the alpha guard.
+        changed.fingerprint.as_mut().unwrap().alpha = format!("00{}", "ff".repeat(GRID * GRID - 1));
+        assert!(group(&[base, changed]).is_empty());
+    }
+
+    #[test]
+    fn scores_follow_the_largest_reference_and_legacy_reports_remain_readable() {
+        let image = picture(64, 64, badge([0.2, 0.5, 0.9]));
+        let mut small = row("a/small.png", &image, "a");
+        small.resource.bytes = 10;
+        let large = row("b/large.png", &image, "b");
+        let groups = group(&[small, large]);
+        assert_eq!(groups[0].members, vec![1, 0]);
+        assert!(groups[0].comparisons[0].identical);
+        assert!(!groups[0].comparisons[1].identical);
+        let json = serde_json::to_string(&groups).unwrap();
+        let restored: Vec<SimilarGroup> = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored[0].comparisons[1].score, 99.9);
+        let legacy: SimilarGroup =
+            serde_json::from_str(r#"{"kind":"similar","members":[0,1],"redundant_bytes":10}"#)
+                .unwrap();
+        assert!(legacy.comparisons.is_empty());
+    }
+
+    #[test]
+    fn matching_posters_do_not_prove_matching_animations() {
+        let image = picture(64, 64, badge([0.2, 0.5, 0.9]));
+        let still = row("a/still.png", &image, "a");
+        let mut animation = row("b/animated.png", &image, "b");
+        animation.image.as_mut().unwrap().frames = 2;
+        assert!(group(&[still, animation.clone()]).is_empty());
+        let mut copy = animation.clone();
+        copy.resource.path = "c/copy.png".into();
+        assert_eq!(group(&[animation, copy])[0].comparisons[1].score, 100.0);
     }
 
     #[test]

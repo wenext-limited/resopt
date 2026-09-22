@@ -86,3 +86,9 @@ function differencePixels(a, b, gain) {
 }
 
 function displayableInBrowser(format) { return BROWSER_FORMATS.includes(format); }
+
+// A similarity finding is one list item. Match any member, retain its reference.
+function similarGroupRows(records, groups, matchingIndexes) {
+  return groups.filter(group => group.members.some(index => matchingIndexes.has(index)))
+    .map(group => records[group.members[0]]).filter(Boolean);
+}

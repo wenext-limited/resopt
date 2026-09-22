@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const ui = name => fs.readFileSync(path.join(__dirname, '../src/ui', name), 'utf8');
 const FILES = ['core.js', 'i18n.js', 'app.js', 'compare.js', 'detail.js', 'batch.js'];
 const api = vm.runInNewContext(`${ui('core.js')}\n${ui('i18n.js')}
-({differencePixels, formatSize, assetUrl, warningKind, warningKinds, blockedReason, recommendedSavings, hasWarningCandidate, displayableInBrowser, pickLocale, translate, issueText, MESSAGES})`);
+({similarGroupRows, differencePixels, formatSize, assetUrl, warningKind, warningKinds, blockedReason, recommendedSavings, hasWarningCandidate, displayableInBrowser, pickLocale, translate, issueText, MESSAGES})`);
 
 test('the embedded UI parses as one script, exactly as the binary ships it', () => {
   assert.doesNotThrow(() => new vm.Script(`'use strict';(() => {${FILES.map(ui).join('\n')}\nstart();})();`));
@@ -207,4 +207,47 @@ test('UI sources contain no raw control characters (HTML parsing would corrupt t
     const bad = [...ui(name)].filter(ch => ch.charCodeAt(0) < 32 && !'\n\r\t'.includes(ch));
     assert.equal(bad.length, 0, name);
   }
+});
+
+
+test('similarity scores reserve 100 for identical files and handle old reports', () => {
+  const source = ui('detail.js');
+  const start = source.indexOf('function duplicateScore');
+  const end = source.indexOf('function duplicateBlock', start);
+  for (const locale of ['en', 'zh-CN']) {
+    const { duplicateScore } = vm.runInNewContext(`${source.slice(start, end)}; ({duplicateScore})`, {
+      t: (key, ...args) => api.translate(locale, key, args),
+    });
+    const group = { members: [7, 2, 9], comparisons: [
+      { identical: true, score: 100 }, { identical: false, score: 99.999 }, { identical: false, score: 97.23 },
+    ] };
+    assert.match(duplicateScore(group, 7), /100 \/ 100/);
+    assert.match(duplicateScore(group, 2), /99.9 \/ 100/);
+    assert.match(duplicateScore(group, 9), /97.2 \/ 100/);
+    assert.equal(duplicateScore({ members: [7, 2] }, 2), api.translate(locale, 'dupUnscored', []));
+    assert.equal(duplicateScore(group, 10), api.translate(locale, 'dupUnscored', []));
+  }
+});
+
+
+test('similar-image results paginate groups and searching a member retains its group', () => {
+  const records = Array.from({ length: 120 }, (_, index) => ({ path: `image-${index}.png` }));
+  const groups = [{ members: Array.from({ length: 60 }, (_, i) => i) }, { members: Array.from({ length: 60 }, (_, i) => i + 60) }];
+  const rows = api.similarGroupRows(records, groups, new Set(records.map((_, i) => i)));
+  assert.deepEqual([...rows], [records[0], records[60]]);
+  assert.equal(Math.ceil(rows.length / 50), 1, '120 files occupy two group rows on one page');
+  assert.deepEqual([...api.similarGroupRows(records, groups, new Set([73]))], [records[60]], 'a non-reference match returns the group reference');
+  assert.equal(groups[1].members.length, 60, 'search never trims the group members');
+  assert.deepEqual([...api.similarGroupRows(records, groups, new Set())], []);
+});
+
+test('group scores summarize members, exclude self, and preserve missing-score state', () => {
+  const source = ui('app.js');
+  const start = source.indexOf('function groupScoreRange');
+  const end = source.indexOf('function groupBytes', start);
+  const { groupScoreRange } = vm.runInNewContext(`${source.slice(start, end)}; ({groupScoreRange})`);
+  const group = { members: [0, 1, 2], comparisons: [{ score: 100, identical: true }, { score: 96.2, identical: false }, { score: 98.8, identical: false }] };
+  assert.deepEqual([...groupScoreRange(group)], [96.2, 98.8]);
+  assert.equal(groupScoreRange({ members: [0, 1] }), null);
+  assert.equal(groupScoreRange({ members: [0, 1, 2], comparisons: group.comparisons.slice(0, 2) }), null);
 });
