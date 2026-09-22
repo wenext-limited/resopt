@@ -17,7 +17,11 @@ pub use archive::{ArchiveEntry, ArchiveInfo};
 #[cfg(feature = "native")]
 mod media;
 #[cfg(feature = "native")]
+mod vap;
+#[cfg(feature = "native")]
 pub use media::MediaInfo;
+#[cfg(feature = "native")]
+pub use vap::VapInfo;
 #[cfg(feature = "native")]
 mod package_diff;
 #[cfg(feature = "native")]

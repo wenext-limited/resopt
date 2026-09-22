@@ -215,6 +215,8 @@ pub struct ResourceAnalysis {
     /// Bounded ZIP contents; entries are never extracted into the project.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub archive: Option<crate::archive::ArchiveInfo>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub vap: Option<crate::vap::VapInfo>,
     /// Canvas, timing and size of an animation, when it could be parsed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub animation: Option<AnimationInfo>,
@@ -238,6 +240,7 @@ impl ResourceAnalysis {
             fingerprint: None,
             media: None,
             archive: None,
+            vap: None,
             animation: None,
         }
     }
@@ -444,7 +447,7 @@ pub(crate) fn analyze_with_observer(
     let (mut work, settled): (Vec<usize>, Vec<usize>) = (0..total).partition(|&index| {
         let resource = &inventory.assets[index];
         resource.support == "optimizable"
-            || resource.format == "zip"
+            || matches!(resource.format.as_str(), "zip" | "mp4" | "vap")
             || (resource.kind == "image" && options.probe_only)
             || (is_media(resource) && crate::media::ffprobe_available())
     });
@@ -459,7 +462,7 @@ pub(crate) fn analyze_with_observer(
         if control.is_cancelled() {
             return ResourceAnalysis::new(resource, "not_analyzed");
         }
-        if is_media(resource) {
+        if is_media(resource) && resource.format != "mp4" {
             // Inspection only: spawning ffprobe runs on the worker pool so it
             // never delays image results.
             let mut row = settled_row(resource);
@@ -484,6 +487,34 @@ pub(crate) fn analyze_with_observer(
                 return failed;
             }
         };
+        if matches!(resource.format.as_str(), "mp4" | "vap") {
+            let mut row = settled_row(resource);
+            row.sha256 = Some(digest);
+            match crate::vap::inspect(&bytes) {
+                Ok(Some(info)) => {
+                    row.issues.clear();
+                    row.status = "inspected".into();
+                    row.resource.kind = "animation".into();
+                    row.resource.format = "vap".into();
+                    let artifact = PathBuf::from(format!("originals/{index}.mp4"));
+                    match write_new(&out.join(&artifact), &bytes) {
+                        Ok(()) => row.original_artifact = Some(artifact),
+                        Err(error) => row.issues.push(format!("preview_unavailable: {error:#}")),
+                    }
+                    row.vap = Some(info);
+                }
+                Ok(None) => {
+                    if let Ok(path) = contained_file(&inventory.root, &resource.path) {
+                        row.media = crate::media::probe(&path);
+                    }
+                }
+                Err(error) => {
+                    row.status = "failed".into();
+                    row.issues.push(format!("{error:#}"));
+                }
+            }
+            return row;
+        }
         // Archive previews have their own entry paths; do not reuse image-cache manifests.
         if resource.format == "zip" {
             return crate::archive::analyze(&context, resource, index, &bytes, &digest);

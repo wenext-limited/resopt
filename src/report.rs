@@ -90,6 +90,7 @@ fn script() -> String {
         include_str!("ui/compare.js"),
         include_str!("ui/detail.js"),
         include_str!("ui/archive.js"),
+        include_str!("ui/effects.js"),
         include_str!("ui/batch.js"),
         "start();})();",
     ]

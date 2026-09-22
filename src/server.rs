@@ -642,6 +642,7 @@ fn serve_artifact(request: Request, app: &App, route: &str) {
         Some("heic") => "image/heic",
         Some("webp") => "image/webp",
         Some("json") => "application/json",
+        Some("mp4") => "video/mp4",
         _ => "application/octet-stream",
     };
     match contained_file(&app.directory, &relative).and_then(|p| crate::resources::bounded_read(&p))
@@ -673,7 +674,7 @@ fn respond_with(request: Request, code: u16, media: &str, bytes: Vec<u8>, extra:
         ("Cross-Origin-Resource-Policy", "same-origin"),
         (
             "Content-Security-Policy",
-            "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
+            "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self'; media-src 'self' blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'",
         ),
     ]
     .into_iter()

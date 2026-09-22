@@ -412,6 +412,7 @@ mod tests {
             fingerprint: None,
             media: None,
             archive: None,
+            vap: None,
             animation: None,
         }
     }

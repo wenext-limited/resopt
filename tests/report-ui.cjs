@@ -5,9 +5,9 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const ui = name => fs.readFileSync(path.join(__dirname, '../src/ui', name), 'utf8');
-const FILES = ['core.js', 'i18n.js', 'app.js', 'compare.js', 'detail.js', 'archive.js', 'batch.js'];
+const FILES = ['core.js', 'i18n.js', 'app.js', 'compare.js', 'detail.js', 'archive.js', 'effects.js', 'batch.js'];
 const api = vm.runInNewContext(`${ui('core.js')}\n${ui('i18n.js')}
-({similarGroupRows, differencePixels, formatSize, assetUrl, warningKind, warningKinds, blockedReason, recommendedSavings, hasWarningCandidate, displayableInBrowser, pickLocale, translate, issueText, MESSAGES})`);
+({applyVapAlpha, similarGroupRows, differencePixels, formatSize, assetUrl, warningKind, warningKinds, blockedReason, recommendedSavings, hasWarningCandidate, displayableInBrowser, pickLocale, translate, issueText, MESSAGES})`);
 
 test('the embedded UI parses as one script, exactly as the binary ships it', () => {
   assert.doesNotThrow(() => new vm.Script(`'use strict';(() => {${FILES.map(ui).join('\n')}\nstart();})();`));
@@ -250,4 +250,12 @@ test('group scores summarize members, exclude self, and preserve missing-score s
   assert.deepEqual([...groupScoreRange(group)], [96.2, 98.8]);
   assert.equal(groupScoreRange({ members: [0, 1] }), null);
   assert.equal(groupScoreRange({ members: [0, 1, 2], comparisons: group.comparisons.slice(0, 2) }), null);
+});
+
+
+test('VAP alpha reconstruction retains RGB and uses the mask red channel', () => {
+  const rgb = new Uint8ClampedArray([10, 20, 30, 255, 40, 50, 60, 255]);
+  const alpha = new Uint8ClampedArray([0, 99, 99, 255, 128, 99, 99, 255]);
+  assert.deepEqual([...api.applyVapAlpha(rgb, alpha)], [10, 20, 30, 0, 40, 50, 60, 128]);
+  assert.throws(() => api.applyVapAlpha(rgb, new Uint8ClampedArray(4)), /size mismatch/);
 });

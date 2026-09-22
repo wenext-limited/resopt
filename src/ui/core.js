@@ -92,3 +92,10 @@ function similarGroupRows(records, groups, matchingIndexes) {
   return groups.filter(group => group.members.some(index => matchingIndexes.has(index)))
     .map(group => records[group.members[0]]).filter(Boolean);
 }
+
+// VAP's alpha region stores coverage in its decoded red channel, not video alpha.
+function applyVapAlpha(rgb, alpha) {
+  if (rgb.length !== alpha.length || rgb.length % 4) throw new Error('VAP plane size mismatch');
+  for (let i = 0; i < rgb.length; i += 4) rgb[i + 3] = alpha[i];
+  return rgb;
+}

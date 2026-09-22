@@ -26,7 +26,7 @@ function candidateStatus(c) {
 }
 
 function renderDetail() {
-  stopPlayback();
+  stopPlayback(); stopEffectPlayback();
   const pane = $('inspector'); pane.replaceChildren();
   const r = state.selected;
   if (!r) { const empty = el('div', 'empty'); empty.append(el('strong', '', t('select')), el('span', '', t('selectHint'))); pane.append(empty); return; }
@@ -64,7 +64,8 @@ function renderDetail() {
   }
   const android = r.resource?.android;
   if (android) pane.append(el('p', 'android-note', `${t('android')}: ${t('androidInfo', android.area, android.res_type || '—', android.name || '—', android.qualifiers?.length ? android.qualifiers.join('-') : '—')}`));
-  if (r.animation) pane.append(animationPlayer(r));
+  if (r.vap) pane.append(vapPlayer(r));
+  else if (r.animation) pane.append(animationPlayer(r));
   else if (!variants.length && r.original_preview) {
     // Nothing smaller was produced (or this format has no enabled target): still show the image.
     const single = el('div', 'comparison single'); single.append(drawPreview(r, null, true)); pane.append(single);
