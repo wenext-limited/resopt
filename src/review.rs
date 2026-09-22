@@ -258,6 +258,13 @@ impl Review {
             "png" if !candidate.lossy => {
                 optimizer::verify(&original, &optimized, self.report.options.png_reductions)?;
             }
+            "zip" => {
+                ensure!(
+                    !candidate.lossy && resource.resource.format == "zip",
+                    "ZIP candidates are lossless and same-format"
+                );
+                crate::archive::verify(&original, &optimized)?;
+            }
             "svga" => {
                 ensure!(
                     !candidate.lossy && resource.resource.format == "svga",

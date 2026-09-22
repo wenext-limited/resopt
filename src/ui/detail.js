@@ -52,7 +52,16 @@ function renderDetail() {
   if (r.media) facts.append(el('span', '', t('mediaInfo', r.media.streams.join(' + '), r.media.duration_seconds?.toFixed(1) ?? '—', r.media.bit_rate ? Math.round(r.media.bit_rate / 1000) : '—')));
   if (r.resource?.extension_mismatch) facts.append(el('span', 'status-warn', t('mismatch')));
   pane.append(facts);
-  if (r.archive) pane.append(archiveBlock(r));
+  if (r.archive) {
+    pane.append(archiveBlock(r));
+    if (c) {
+      pane.append(el('p', 'summary-text', t('archiveCandidate', size(r.resource.bytes), size(c.bytes), size(c.savings_bytes))));
+      const download = el('a', 'link-button', t('archiveDownload')); download.href = assetUrl(c.artifact); download.download = basename(pathText(r)); pane.append(download);
+      renderActions(pane, r, c);
+    }
+    if (r.issues?.length) pane.append(el('p', 'reasons', r.issues.join('; ')));
+    return;
+  }
   const android = r.resource?.android;
   if (android) pane.append(el('p', 'android-note', `${t('android')}: ${t('androidInfo', android.area, android.res_type || '—', android.name || '—', android.qualifiers?.length ? android.qualifiers.join('-') : '—')}`));
   if (r.animation) pane.append(animationPlayer(r));

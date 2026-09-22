@@ -36,6 +36,7 @@ pub(crate) fn can_optimize(kind: &str, format: &str) -> bool {
     match kind {
         "image" => decodable(format),
         "animation" => format == "svga",
+        "archive" => format == "zip",
         _ => false,
     }
 }

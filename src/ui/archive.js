@@ -3,6 +3,7 @@ function archiveBlock(r) {
   const info = r.archive, block = el('section', 'archive-block');
   block.setAttribute('aria-label', t('archiveContents'));
   block.append(el('h2', '', t('archiveContents')), el('p', 'hint', t('archiveSummary', count(info.entries.length), size(r.resource.bytes), size(info.expanded_bytes))), el('p', 'hint', t('archivePreviewLimit', info.preview_limit)));
+  if (info.optimized_images) block.append(el('p', 'hint', t('archiveOptimized', count(info.optimized_images))));
   if (info.rewrite_blockers.length) block.append(el('p', 'reasons', t('archiveProtected')));
   const input = el('input'); input.type = 'search'; input.placeholder = t('archiveSearch'); input.setAttribute('aria-label', t('archiveSearch'));
   const select = el('select'); select.setAttribute('aria-label', t('archiveType'));
@@ -23,7 +24,7 @@ function archiveBlock(r) {
       else thumb.textContent = entry.directory ? '▸' : (entry.format || '—').toUpperCase().slice(0, 5);
       const identity = el('div', 'archive-entry-name'); identity.append(el('span', 'path', entry.path));
       if (entry.metadata) identity.append(el('span', 'hint', t('archiveMetadata')));
-      if (entry.issues.length) identity.append(el('span', 'hint', entry.issues.map(x => t('archivePreviewUnavailable', x.replace(/^preview_unavailable: /, ''))).join('; ')));
+      if (entry.issues.length) identity.append(el('span', 'hint', entry.issues.map(x => x.startsWith('archive_image_unchanged: ') ? t('archiveImageUnchanged', x.slice(25)) : t('archivePreviewUnavailable', x.replace(/^preview_unavailable: /, ''))).join('; ')));
       const bytes = el('span', 'number'); bytes.append(sizeNode(entry.bytes), el('small', '', t('archiveStored', size(entry.compressed_bytes))));
       row.append(thumb, identity, bytes); list.append(row);
     }

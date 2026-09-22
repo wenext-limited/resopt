@@ -25,3 +25,26 @@ Validation includes hostile path/size fixtures, archive entry round-trip reads,
 manifest detection, and an end-to-end report that preserves source bytes and
 creates a preview without extracting the source paths. The path-validation
 ablation removes the unsafe-name guard and makes its regression fixture fail.
+
+## Lossless embedded PNG optimization
+
+Ordinary ZIP resources without recognized integrity metadata can produce one
+lossless, same-format ZIP candidate. Only static PNG image data is recompressed;
+filenames, decoded pixels, PNG metadata, atlas files and all other file payloads
+stay unchanged. Unchanged entries are copied as their original compressed streams.
+PNG entries with extra ZIP metadata or unsupported layout remain unchanged.
+Both candidate creation and apply independently verify entry order, paths,
+permissions, timestamps, comments, extra data and every expanded payload.
+
+The actual ZIP file size determines savings, never the sum of expanded PNG sizes.
+Apply and restore operate on the whole package using the existing source hashes,
+project lock and recovery journal. Cancellation stops between entries. Nested
+archives are not rewritten. Hash maps in Cocos/custom JSON block rebuilding;
+Spine skeleton hashes refer to the unchanged skeleton and do not block texture
+recompression. External signatures and hashes cannot be inferred from the ZIP:
+packages managed by an external publisher still require its release process.
+
+On a temporary copy of the real 357-entry Ludo ZIP, effort 0 produced a verified
+candidate saving 392,632 bytes (383.43 KiB). Apply and restore returned the temporary
+source to the exact original bytes. This is source ZIP savings, not IPA savings.
+The payload-check ablation admits a changed atlas and fails the regression test.
