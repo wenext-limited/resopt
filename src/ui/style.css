@@ -35,6 +35,7 @@ dialog h3{font-size:13px;margin:16px 0 6px}.check{display:flex;gap:9px;align-ite
 @media(forced-colors:active){.resource-row[aria-selected=true]{outline:2px solid Highlight}}
 .toolbar{flex-wrap:wrap}.search{min-width:220px}
 .duplicate-block{border:1px solid var(--line);border-radius:8px;padding:12px;margin:14px 0;font-size:12px;display:flex;flex-direction:column;gap:4px}.duplicate-block .link-button{padding:0;text-align:left;font-size:11px}.duplicate-block .link-button:disabled{color:var(--ink);opacity:1;font-weight:600}
+.duplicate-card .path{min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere;line-height:1.5}
 /* Multi-selection and applied-image state */
 :root{--optimized-bg:#f3faf5;--optimized-hover:#eaf6ee;--optimized-pill:#dff4e5;--optimized-icon:#34c759;--optimized-ink:#14613a}
 :root[data-theme=dark]{--optimized-bg:#192c23;--optimized-hover:#1e3529;--optimized-pill:#244433;--optimized-icon:#30d158;--optimized-ink:#b0ebc0}
