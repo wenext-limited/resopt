@@ -2,27 +2,34 @@
 
 **Find smaller app resources, review the real candidates, and apply only what you approve — with every change reversible.**
 
-resopt scans an Xcode, Swift package, Android or plain resource directory, measures what each image and animation could shrink to, and opens a local review page with previews, quality scores and one-click apply and restore.
+resopt scans Xcode, Swift package, Android and plain resource directories. It finds smaller image and ZIP candidates, groups similar images, and previews animations in a local review page with explicit apply and restore controls.
 
 Your files never leave your computer. Analysis never modifies your project.
 
-## What you can do
+**New in [v0.8.0](https://github.com/wenext-limited/resopt/releases/tag/v0.8.0):** scored similarity groups, ZIP browsing and lossless embedded-PNG optimization, and VAP/PAG/TCMP4 playback. [Release notes](CHANGELOG.md#080--2026-09-23).
 
-- **Analyze a whole project.** Asset catalogs, loose resources, Android `res/` and `assets/`. Git ignore rules are respected by default, including nested rules, negations and force-tracked files.
-- **See results while analysis runs.** Completed files appear immediately, largest first. Stop at any time; finished work is cached, so the next run continues where you left off.
-- **Optimize PNG without changing a pixel.** Decoded samples (including color under transparent pixels) and metadata chunks are verified before a candidate is offered.
-- **Compare lossy PNG candidates** on every platform: a reduced colour palette, typically 60–80% smaller, and still a PNG — no renames, no reference changes.
-- **Compare JPEG, HEIC and WebP candidates** at the encoder quality levels you choose (75, 85 and 95 by default), including same-format recompression of existing JPEG and WebP files. Lossless WebP candidates are verified sample-for-sample.
-- **Optimize and preview SVGA animations.** Embedded images are recompressed losslessly; every other byte of the animation and every pixel is verified unchanged. SVGA files are rendered, so you see a thumbnail and can play the animation frame by frame in the review page.
-- **Preview VAP and PAG/TCMP4 effects.** Detect PAG content regardless of its suffix; inspect canvas/timing and editable slots, play transparent effects, and scrub frames. PAG uses a bundled, sandboxed renderer with no CDN requests. Dynamic app-supplied overlays are explicitly identified. [Effect previews](docs/effect-resources.md).
-- **Judge quality with evidence.** Compare 2-up, by swipe, as an onion skin, or as an amplified pixel difference — in the inspector and at full size — alongside SSIMULACRA2 perceptual scores, and RGB and Alpha error for every candidate.
-- **Decide on warnings yourself.** Candidates below the perceptual-score or Alpha thresholds are kept, clearly marked, and excluded from recommended totals. You can accept one after reviewing it; your approval is recorded. Corrupt files, changed dimensions, stale files and protected resources can never be approved through.
-- **Apply safely, one file or many.** Preview exactly which files change, confirm, and restore any time — even after restarting resopt. Batch apply takes an explicit policy, reports each file's outcome, can be stopped midway, and "Restore all" undoes everything. Files you edited after analysis are never overwritten.
-- **Keep references working.** Asset-catalog `Contents.json` entries and statically resolvable references in source, project and web files are migrated together with a format change, and restored together.
-- **Review similar images.** Browse one row per group, then compare all its members together. Compare thumbnails and 0–100 similarity scores against each group’s largest file. Only identical file bytes score 100; near-matches show brightness, opacity, color, and local differences. Intended variants (`@2x`/`@3x`, Android density folders) do not form groups on their own. [Scoring and limitations](docs/similarity.md).
-- **Browse and optimize ZIP resource packages.** Search and filter entries, compare stored and expanded sizes, and preview embedded images without extracting files into your project. Unsigned packages without recognized integrity metadata can be rebuilt with lossless PNG compression, then applied and restored as one verified package. [Archive limits](docs/archive-resources.md).
-- **Inventory everything else.** Audio, ordinary video, fonts, SVG, PDF, Lottie animations and other resource files are listed with an explicit "no optimizer" status. Source code and JSON metadata (such as `Contents.json`) are left out. With `ffprobe` installed, audio and video show codec, duration and bitrate.
-- **Use it in scripts and CI.** JSON output, a self-contained HTML report, and command-line batch apply/restore.
+## Resource support
+
+| Resource | Optimization | Review |
+|---|---|---|
+| PNG | Verified lossless recompression, optional lossy palette reduction | Previews, quality scores, pixel differences |
+| JPEG / HEIC | Lossy candidates on macOS | PNG previews, quality scores, alpha checks |
+| Static WebP | Same-format lossy recompression; PNG → WebP candidates | Lossless PNG → WebP verified sample-for-sample |
+| SVGA 2.x | Lossless embedded-PNG recompression for supported files | Poster, timeline and live frame playback |
+| ZIP resource packages | Lossless embedded-PNG recompression in eligible packages | Searchable contents, stored/expanded sizes, image previews |
+| VAP inside MP4 | Preview only | Reconstructed transparency, playback and frame scrubbing |
+| PAG / TCMP4 | Preview only; recognized by PAG content signature | Playback, frame scrubbing, editable-text/image and video counts |
+| Audio, ordinary video, fonts, SVG, PDF, recognized Lottie JSON | Inventory only | Format and size; optional audio/video metadata via `ffprobe` |
+
+Optimization and preview support have different limits. See [platform support](#platform-support) and [important limits](#important-limits).
+
+## Review before you apply
+
+- **Scan a whole project.** Asset catalogs, loose resources, Android `res/` and `assets/`, with Git ignore rules respected. Results stream into the review page; analysis can be stopped. Eligible image and SVGA results are reused through a verified cache.
+- **Compare image candidates.** Use 2-up, swipe, onion skin or an amplified pixel difference. Lossy image candidates show SSIMULACRA2 quality scores and RGB/alpha errors. Lossless candidates undergo pixel and metadata verification.
+- **Review similar images as groups.** One row represents each group, with thumbnails, total size and a similarity range. Every member is scored against the largest reference file. Only identical file bytes score 100; other scores are approximate and capped at 99.9. Search keeps the entire group visible. Intended scale/density variants do not form findings on their own. Nothing is merged or deleted automatically. [Scoring details](docs/similarity.md).
+- **Decide on warnings.** Candidates below quality or alpha thresholds remain reviewable but are excluded from recommended savings. Accepting a warning is explicit and recorded. Approval cannot bypass corrupt files, stale source hashes, changed dimensions or protected resources.
+- **Apply and restore.** Apply one candidate or a reviewed batch. Changes are journaled and restorable across restarts; later edits are never overwritten. Asset-catalog entries and statically resolvable references are updated together when a format change requires it.
 
 ## Install
 
@@ -38,11 +45,26 @@ With Rust installed:
 
 ```sh
 cargo install resopt-cli --locked
+resopt --version
 ```
 
 The package is named **resopt-cli**; the command is **resopt**. Building from source needs Rust 1.89+ and a C compiler.
 
 ## Start with your project
+
+### Command line
+
+```sh
+resopt web /path/to/project
+```
+
+resopt opens your browser on a page served from `127.0.0.1` only. The printed URL contains a session key; the page and its data are not served without it. Results stream in as files finish. When analysis completes you can compare candidates, apply a change, restore it, or batch-apply under a policy you choose.
+
+The terminal prints the report directory. It holds the report and the restore backups — keep it for as long as you may want to undo changes. To reopen it later (open the URL it prints):
+
+```sh
+resopt serve /path/to/report
+```
 
 ### macOS app (build from source)
 
@@ -59,19 +81,20 @@ to that selection.
 Applied images use a green background and an aligned **Applied** label. The
 local build is ad-hoc signed for testing and is not notarized for distribution.
 
-### Command line
+### ZIP packages and effect previews
+
+Select a ZIP row to browse its contents, search paths, filter formats and compare stored versus expanded sizes. If a verified smaller ZIP is available, apply or restore it as one package. Filenames, pixels, atlas data and other payloads are preserved. Packages with recognized manifests or checksum maps require their publishing workflow. [ZIP support and limits](docs/archive-resources.md).
+
+Select a VAP or PAG/TCMP4 row to play the original effect or scrub its frames. PAG playback uses a bundled renderer in an isolated frame with no CDN requests. These are **previews, not optimization candidates**; app-provided text/images can differ from the template shown. Open reports through `resopt serve` or a local HTTP server, since browser restrictions can block playback from `file://`. [Effect support and limits](docs/effect-resources.md).
+
+To inspect resources without generating optimization candidates:
 
 ```sh
-resopt web /path/to/project
+resopt analyze /path/to/project --probe-only --out /tmp/resopt-inspection
+resopt serve /tmp/resopt-inspection
 ```
 
-resopt opens your browser on a page served from `127.0.0.1` only. The printed URL contains a session key; the page and its data are not served without it. Results stream in as files finish. When analysis completes you can compare candidates, apply a change, restore it, or batch-apply under a policy you choose.
-
-The terminal prints the report directory. It holds the report and the restore backups — keep it for as long as you may want to undo changes. To reopen it later (open the URL it prints):
-
-```sh
-resopt serve /path/to/report
-```
+The output directory must be new and outside the project being scanned.
 
 ### Useful options
 
@@ -87,11 +110,13 @@ resopt web . --out ~/resopt-report --no-open
 resopt web . --include-ignored          # also scan files matched by Git ignore rules
 ```
 
-Quality values are **encoder parameters, not savings percentages**. `--min-score` is the lowest SSIMULACRA2 score a lossy candidate may have and still be recommended (100 is identical, 90+ is usually imperceptible).
+Quality values are **encoder parameters, not savings percentages**. `--min-score` sets the minimum SSIMULACRA2 quality score for recommended lossy candidates. It does not control the separate 0–100 similarity scores used in image groups.
 
 Use `--jobs` to set parallel workers (default: CPU count, up to 8), `--max-pixels` for very large images, and `--no-cache` to skip the result cache. `resopt cache` prints the cache location; `resopt cache --clear` empties it.
 
 ## Reports, scripts and CI
+
+Keep the **entire report directory**, including `analysis.json`, previews, candidates, bundled playback files and restore backups. Copying only `report.html` loses those resources.
 
 ```sh
 resopt scan . --json                                   # inventory only, nothing is encoded
@@ -100,9 +125,12 @@ resopt apply /tmp/report --dry-run                     # what the default policy
 resopt apply /tmp/report                               # verified lossless, same-format only
 resopt apply /tmp/report --lossy --min-score 92        # widen the policy explicitly
 resopt restore /tmp/report                             # undo every applied change
+resopt report /tmp/report                              # refresh HTML without re-analysis
 ```
 
 `apply` on a report never applies lossy candidates, format changes or warning candidates unless you pass `--lossy`, `--cross-format` or `--accept-warning <kind>`. Each file is applied as its own recoverable operation and gets its own outcome line; the command exits non-zero if any file failed.
+
+Refreshing HTML does not create missing scores, previews or playback artifacts in an older report. Re-analyze the project to use newly added analysis features.
 
 The original PNG-only plan workflow is still available: `resopt plan`, then `resopt apply <plan>` and `resopt restore <plan>`.
 
@@ -128,9 +156,11 @@ resopt package-diff before.apk after.apk      # also .aab, .ipa or any zip
 
 | Capability | macOS | Linux / Windows |
 |---|---|---|
-| Project inventory, Git ignore rules, duplicate detection | Yes | Yes |
+| Project inventory, Git ignore rules, scored similarity groups | Yes | Yes |
 | PNG lossless optimization | Yes | Yes |
 | SVGA lossless optimization | Yes | Yes |
+| ZIP browsing and lossless embedded-PNG optimization | Yes | Yes |
+| VAP / PAG / TCMP4 previews | Compatible browser required | Compatible browser required |
 | Lossy PNG candidates (palette reduction; `--no-lossy-png` to skip) | Yes | Yes |
 | WebP candidates, lossy and lossless (on by default; `--no-webp` to skip) | Yes | Yes¹ |
 | JPEG and HEIC candidates; decoding JPEG/HEIC/GIF/TIFF inputs | Yes (Apple ImageIO) | No |
@@ -147,7 +177,7 @@ A browser-only edition (static site, WebAssembly) optimizes individual PNG files
 
 - Savings are **source-file bytes**. They are not IPA/APK size or store download size: Xcode compiles asset catalogs and AAPT2 re-compresses PNGs. Use `package-diff` on real builds to measure shipped size.
 - The inventory lists files on disk. It does not know which files a particular build target, flavor or variant includes.
-- A perceptual score helps you prioritize; it does not replace looking at the image, especially for UI art with fine edges.
+- Quality and similarity scores help prioritize review; they do not replace looking at the image. Similarity uses 16×16 summaries and may miss tiny details or local color changes. Matching files are not necessarily interchangeable.
 - Lossy PNG uses at most 256 palette colours without dithering. Images with soft transparency usually exceed the default Alpha tolerance and are offered as warnings rather than recommendations; raise `--max-alpha-error` if that trade-off is acceptable for your artwork.
 - HEIC candidates are always lossy: Apple's encoder has no lossless mode (at quality 100, 2–17% of samples still change), so resopt does not offer a "lossless HEIC". It offers quality 100 as a clearly labelled *near-lossless* candidate instead.
 - Existing HEIC files are not rewritten losslessly. Measured on 692 real app HEIC files, removable metadata (Exif, XMP) was 0.15% of their bytes and none contained a thumbnail, which does not justify rewriting the container.
@@ -155,9 +185,11 @@ A browser-only edition (static site, WebAssembly) optimizes individual PNG files
 - WebP is not offered for asset-catalog renditions.
 - Reference migration covers statically resolvable references. Names built at runtime, third-party decoders and references outside the scanned directory need your review; ambiguous references block the change instead of guessing.
 - SVGA 1.x (zip) files, and SVGA files containing audio or unknown fields, are reported as unsupported rather than rewritten (they are still previewed). SVGA playback draws bitmaps, shapes, clip paths and mattes; dynamic text/images set by app code at runtime and JPEG-encoded embedded images are not drawn.
-- SVG, PDF, audio, ordinary video, fonts, and PAG/VAP effects are inspected but not optimized. ZIP resource packages support verified lossless embedded-PNG optimization. No lossy audio/video transcoding is performed.
+- ZIP inspection is bounded to 64 MiB input, 10,000 entries and 256 MiB expanded contents. Up to 32 large images receive previews. Nested archives are listed but not recursively rewritten; external signatures or hashes still require the package publisher.
+- VAP/PAG playback depends on browser and decoder compatibility and previews original content only. It does not establish native-device pixel parity. No PAG/VAP transcoding, animated WebP optimization, audio transcoding or font subsetting is offered.
+- Archive and effect inspection currently bypass the image-result cache.
 - HEIC candidates cannot be displayed by most browsers; the comparison uses a PNG preview and links the file so you can open it in Preview or Safari.
 
 Run `resopt --help` or `resopt <command> --help` for every option.
 
-[Changelog](CHANGELOG.md) · [Development guide](docs/development.md) · [Architecture](docs/architecture.md) · [Validation evidence](docs/validation.md) · [Performance](docs/performance.md) · [MIT license](LICENSE)
+[Changelog](CHANGELOG.md) · [Development guide](docs/development.md) · [Architecture](docs/architecture.md) · [Validation evidence](docs/validation.md) · [Performance](docs/performance.md) · [MIT license](LICENSE) · [PAG runtime licenses](src/ui/vendor/libpag/LICENSE.txt)
