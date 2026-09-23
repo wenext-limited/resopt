@@ -52,6 +52,8 @@ with a stated limitation. Evidence lives in `docs/validation.md` and
 - [x] Source savings reported separately from measured package savings (`resopt package-diff`).
 
 ## 7. Other formats
+- [x] ZIP contents browsing, bounded embedded-image previews, and verified lossless PNG recompression with whole-package apply/restore (tests/archives.rs, docs/archive-resources.md).
+- [~] VAP and PAG/TCMP4 transparent previews and scrubbing, including a bundled isolated PAG renderer (tests/effects.rs, docs/effect-resources.md). App-injected replacements and native-device pixel parity remain outside the preview; no effect transcoding is offered.
 - [x] SVGA: verified optimization path or documented blocker.
 - [~] SVG, audio, video: evaluated and **not optimized** (reasons in docs/validation.md); `ffprobe` inspection with install guidance; every such file carries an explicit "no optimizer" status.
 - [x] Lossless and lossy operations are separated everywhere.
@@ -78,6 +80,7 @@ with a stated limitation. Evidence lives in `docs/validation.md` and
 - [x] Duplicate / resized / near-duplicate image detection (requested during the work; `src/similarity.rs`).
 
 ## Release
+- [x] v0.8.0 (2026-09-23) published on [GitHub Releases](https://github.com/wenext-limited/resopt/releases/tag/v0.8.0) and [crates.io](https://crates.io/crates/resopt-cli/0.8.0). [Release CI](https://github.com/wenext-limited/resopt/actions/runs/35827517790) passed every platform, browser, end-to-end and binary-package job. All four downloaded archive checksums matched SHA256SUMS; third-party notices were present and text-equivalent (Windows uses CRLF). The downloaded Apple Silicon CLI and a clean registry installation each passed analyze → apply → byte-exact restore. The installed crate also inspected real PAG/VAP samples and emitted the pinned renderer byte-for-byte. A temporary source-built macOS app reported 0.8.0 and contained the notices; this was an ad-hoc development build, not a notarized app download.
 - [x] fmt, clippy, unit/integration, native codec, WASM and browser verification pass.
 - [x] CI green on macOS, Linux, Windows.
 - [x] v0.7.0 (2026-09-19) on GitHub Releases and crates.io, verified the same way: SHA256SUMS for all four archives, the downloaded macOS binary through the 16-step browser test, and a clean `cargo install resopt-cli --version 0.7.0` through analyze → apply → restore.
