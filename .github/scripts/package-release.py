@@ -80,6 +80,8 @@ def main():
         package.mkdir()
         for source in [binary, Path('README.md'), Path('LICENSE')]:
             shutil.copy2(source, package / source.name)
+        shutil.copy2('src/ui/vendor/libpag/LICENSE.txt', package / 'THIRD-PARTY-LICENSES-libpag.txt')
+        shutil.copy2('src/ui/vendor/libpag/README.md', package / 'LIBPAG-NOTICE.md')
         if windows:
             with zipfile.ZipFile(archive, 'w', zipfile.ZIP_DEFLATED) as bundle:
                 for source in sorted(package.iterdir()):

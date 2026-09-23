@@ -1,5 +1,25 @@
 # Changelog
 
+## 0.8.0 · 2026-09-23
+
+### Added
+- **Similarity scores and grouped review.** Each similar-image group is one result row with thumbnails, total size and a score range. Every member is compared directly with the largest reference file; only identical file hashes score 100. Search and pagination preserve whole groups. Scores remain approximate fingerprint agreement, not proof of interchangeability.
+- **ZIP resource browsing.** Search/filter package entries, inspect compressed and expanded sizes, and preview embedded images without extracting paths into the project. Inspection enforces input, entry-count, expansion, path and symlink limits.
+- **Lossless PNG optimization inside ZIPs.** Eligible packages produce a smaller, same-format ZIP candidate. PNG pixels and metadata, filenames, atlas/config payloads and entry metadata are verified before apply. Apply/restore use the existing recovery journal. Recognized manifests and checksum maps require the package publisher and are not rewritten. A real Ludo ZIP copy saved 383.4 KiB and restored byte-for-byte.
+- **VAP previews.** Detect VAP metadata inside MP4 files, reconstruct transparent playback, and scrub frames. Canvas, timing and dynamic-source counts are shown; app-injected overlays are explicitly outside the preview.
+- **PAG/TCMP4 previews.** Detect PAG content regardless of the suffix and preview original templates with playback, frame scrubbing, and editable-text/image counts. The pinned offline libpag renderer runs in an opaque-origin sandbox without network or mutation API access. Runtime files and license notices are bundled; no CDN requests are needed.
+
+### Fixed
+- Similarity groups no longer chain indirectly matching images into misleading groups.
+- Localized opacity changes cannot be hidden by the average alpha difference.
+- Matching poster frames no longer imply matching animations.
+
+### Release notes
+- PAG/VAP remain inspection and playback features; no animation transcoding is offered.
+- ZIP optimization is limited to verified static PNG recompression; nested archives are listed but not recursively rewritten.
+- Existing reports remain readable. New similarity scores and resource inspections require re-analysis.
+- CLI archives and source-built macOS apps include the PAG runtime's third-party license notices.
+
 ## 0.7.0 · 2026-09-19
 
 ### Added
