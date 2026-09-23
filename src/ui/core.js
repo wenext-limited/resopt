@@ -99,3 +99,20 @@ function applyVapAlpha(rgb, alpha) {
   for (let i = 0; i < rgb.length; i += 4) rgb[i + 3] = alpha[i];
   return rgb;
 }
+
+// Keep report indexes stable. When the reference disappears, its scores cannot
+// be relabeled as comparisons against a different image.
+function remainingSimilarGroups(groups, records, missing) {
+  return groups.flatMap(group => {
+    const members = group.members.filter(index => records[index] && !missing.has(index));
+    if (members.length < 2) return [];
+    if (members.length === group.members.length) return [group];
+    const reference = records[members[0]];
+    const identical = reference.sha256 && members.every(index => records[index].sha256 === reference.sha256);
+    const resized = members.some(index => records[index].image?.width !== reference.image?.width || records[index].image?.height !== reference.image?.height);
+    return [{ ...group, members, kind: identical ? 'identical' : resized ? 'resized' : 'similar',
+      comparisons: members[0] === group.members[0] && group.comparisons?.length === group.members.length ? members.map(index => group.comparisons[group.members.indexOf(index)]) : [],
+      redundant_bytes: members.slice(1).reduce((bytes, index) => bytes + (records[index].resource?.bytes || 0), 0),
+    }];
+  });
+}

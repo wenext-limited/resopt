@@ -395,6 +395,13 @@ fn api_get(app: &Arc<App>, route: &str, query: &str) -> Result<Option<serde_json
             })?
         }
         "/api/report" => crate::report::meta(&app.review()?.report),
+        "/api/presence" => {
+            if app.batch_running.load(Ordering::SeqCst) {
+                serde_json::json!({"busy": true})
+            } else {
+                serde_json::json!({"missing": app.review()?.missing_resources()?})
+            }
+        }
         "/api/state" => match app.review.get() {
             Some(review) => review.states(),
             None => serde_json::json!({}),

@@ -647,3 +647,48 @@ fn analysis_can_be_cancelled_and_still_yields_a_consistent_reviewable_report() {
     );
     assert!(plan.starts_with("HTTP/1.1 200"), "{plan}");
 }
+
+#[test]
+fn presence_endpoint_tracks_deleted_and_recreated_resources_with_stable_indexes() {
+    let base = tempfile::tempdir().unwrap();
+    let root = base.path().join("project");
+    fs::create_dir_all(root.join("nested")).unwrap();
+    fs::write(root.join("nested/a.txt"), b"resource").unwrap();
+    let out = base.path().join("report");
+    resopt::analyze(
+        &root,
+        &out,
+        resopt::AnalysisOptions {
+            probe_only: true,
+            ..Default::default()
+        },
+    )
+    .unwrap();
+    let snapshot = fs::read(out.join("analysis.json")).unwrap();
+    let mut server = Server::new(
+        Command::new(env!("CARGO_BIN_EXE_resopt"))
+            .args(["serve", out.to_str().unwrap(), "--port", "0"])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap(),
+    );
+    let mut line = String::new();
+    server.stdout.read_line(&mut line).unwrap();
+    let url = line.trim().strip_prefix("Review server: http://").unwrap();
+    let (address, token) = url.split_once("/?k=").unwrap();
+    let headers = format!("X-Resopt-Token: {token}\r\n");
+    assert!(request(address, "GET", "/api/presence", "", "").starts_with("HTTP/1.1 403"));
+    let read = || {
+        let response = request(address, "GET", "/api/presence", &headers, "");
+        assert!(response.starts_with("HTTP/1.1 200"), "{response}");
+        serde_json::from_str::<serde_json::Value>(response.split_once("\r\n\r\n").unwrap().1)
+            .unwrap()
+    };
+    assert_eq!(read()["missing"], json!([]));
+    fs::remove_dir_all(root.join("nested")).unwrap();
+    assert_eq!(read()["missing"], json!([0]));
+    fs::create_dir(root.join("nested")).unwrap();
+    fs::write(root.join("nested/a.txt"), b"resource").unwrap();
+    assert_eq!(read()["missing"], json!([]));
+    assert_eq!(fs::read(out.join("analysis.json")).unwrap(), snapshot);
+}

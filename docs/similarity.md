@@ -81,3 +81,24 @@ The group-list projection was also ablated: returning individual matched files
 instead of group references makes the 120-file / two-group pagination and
 non-reference search regression fail. With grouping restored, the two groups
 occupy two rows on one page and searching a member retains all its peers.
+
+## Files removed during a live review
+
+After analysis, the server's authenticated presence endpoint checks original paths
+and any recorded conversion targets without hashing image payloads. The browser
+polls every two seconds and refreshes only after a change, preserving playback
+and scroll position on unchanged ticks. Deleted files are hidden from results,
+summary totals and batch previews. Groups with fewer than two present members
+are hidden. If a reference disappears, remaining members get a new reference
+label but their old comparison scores are cleared until re-analysis.
+
+Report indexes, analysis JSON and recovery journals are not rewritten. Returning
+a file to its original path makes its analyzed row visible again. An unavailable
+project root or a failed check preserves the last known list and shows a retry
+notice. New files and changes to file contents require a new analysis; a static
+HTML report has no live filesystem connection. Presence checks defer during
+in-app apply/restore and server batch operations.
+
+Validation covers deleted directories, reappearing files, authenticated polling,
+conversion target paths, group/reference removal, and unchanged-tick behavior.
+Removing missing-member filtering reproduces the stale-group regression.

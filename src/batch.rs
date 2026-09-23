@@ -151,12 +151,14 @@ pub struct BatchPlan {
 pub(crate) fn plan(review: &Review, policy: &BatchPolicy) -> Result<BatchPlan> {
     policy.validate()?;
     let states = review.states();
+    let missing = review.missing_resources()?;
     let mut items = Vec::new();
     for (index, resource) in review.report.resources.iter().enumerate() {
         if policy
             .resources
             .as_ref()
             .is_some_and(|r| !r.contains(&index))
+            || missing.binary_search(&index).is_ok()
             || resource.status != "candidates_available"
             || resource.resource.conversion_exclusion.is_some()
             || states

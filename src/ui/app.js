@@ -7,6 +7,7 @@ const state = {
   token: boot.sessionToken || null,
   meta: boot.meta || null,
   records: [],            // sparse, indexed like the final report
+  missing: new Set(), presenceStarted: false, presenceError: '',
   loaded: 0,              // rows received from the live feed
   phase: boot.sessionToken ? 'analyzing' : 'ready',
   progress: { completed: 0, total: 0 },
@@ -99,12 +100,49 @@ async function poll() {
     if (state.phase === 'ready') {
       const [meta, operations] = await Promise.all([api('/api/report'), api('/api/state')]);
       state.meta = meta; state.operations = operations;
+      if (!state.presenceStarted) { state.presenceStarted = true; setTimeout(pollPresence, 0); }
     }
   } catch (error) {
     state.disconnected = true;
   }
   renderStatus(); refresh(false);
   if (state.phase === 'analyzing' || state.disconnected) setTimeout(poll, state.disconnected ? 2000 : 600);
+}
+
+// Once analysis settles, poll metadata only; unchanged ticks never re-render the
+// inspector (which would reset scroll position, comparisons and animation playback).
+async function pollPresence() {
+  if (state.busy) { setTimeout(pollPresence, 2000); return; }
+  let refreshNeeded = false;
+  try {
+    const result = await api('/api/presence');
+    if (result.busy) { setTimeout(pollPresence, 2000); return; }
+    if (!Array.isArray(result.missing) || result.missing.some(index => !Number.isInteger(index) || index < 0 || index >= state.records.length)) throw new Error('Invalid file status');
+    const missing = new Set(result.missing);
+    const changed = missing.size !== state.missing.size || [...missing].some(index => !state.missing.has(index));
+    const hadError = !!state.presenceError; state.presenceError = '';
+    if (changed) {
+      state.missing = missing;
+      // Refresh operation badges only on a presence change, not every tick.
+      try { state.operations = await api('/api/state'); } catch { /* retry on the next change */ }
+      refreshNeeded = true;
+    }
+    if (hadError || changed) renderStatus();
+  } catch (error) {
+    const message = String(error.message || error);
+    if (state.presenceError !== message) { state.presenceError = message; renderStatus(); }
+  }
+  if (refreshNeeded) refresh(false);
+  setTimeout(pollPresence, 2000);
+}
+
+function similarGroups() {
+  const groups = state.meta?.similarGroups || [];
+  if (state.visibleGroupSource !== groups || state.visibleMissing !== state.missing) {
+    state.visibleGroupSource = groups; state.visibleMissing = state.missing;
+    state.visibleGroups = remainingSimilarGroups(groups, state.records, state.missing);
+  }
+  return state.visibleGroups;
 }
 
 // ---- status, summary ---------------------------------------------------------
@@ -121,6 +159,7 @@ function renderStatus() {
     stop.addEventListener('click', async () => { state.cancelling = true; renderStatus(); try { await api('/api/cancel', {}); } catch { /* surfaced by polling */ } });
     banner.append(stop); line(t('localOnly'), 'hint'); return;
   }
+  if (state.presenceError) { banner.classList.add('warn'); line(t('fileStatusUnavailable'), 'hint'); }
   if (state.meta?.cancelled) { banner.classList.add('warn'); line(t('cancelled')); }
   const p = state.meta?.performance;
   if (p) line(t('perf', p.wall_seconds.toFixed(1), p.workers, count(p.cache_hits), count(p.duplicate_reuses)), 'hint');
@@ -129,7 +168,7 @@ function renderStatus() {
 }
 
 function renderSummary() {
-  const rows = state.records.filter(Boolean);
+  const rows = state.records.filter((r, index) => r && !state.missing.has(index));
   const opportunities = rows.filter(r => recommendedSavings(r) > 0);
   const setStat = (id, text, title) => { $(id).textContent = text; if (title) $(id).title = title; };
   const savings = opportunities.reduce((n, r) => n + recommendedSavings(r), 0);
@@ -141,7 +180,7 @@ function renderSummary() {
   setStat('stat-applied', size(applied), t('exactBytes', count(applied)));
   const options = state.meta?.options;
   $('scope-note').textContent = options ? t('scope', size(rows.reduce((n, r) => n + (r.resource?.bytes || 0), 0)), (options.qualities || []).join(' / '), options.min_score ?? '—') : '';
-  const modes = { candidates: opportunities.length, warnings: rows.filter(hasWarningCandidate).length, duplicates: (state.meta?.similarGroups || []).length, applied: rows.filter(isApplied).length,
+  const modes = { candidates: opportunities.length, warnings: rows.filter(hasWarningCandidate).length, duplicates: similarGroups().length, applied: rows.filter(isApplied).length,
     images: rows.filter(r => r.resource?.kind === 'image').length, unsupported: rows.filter(r => ['unsupported', 'inventory_only'].includes(r.status)).length,
     failed: rows.filter(r => r.status === 'failed').length, all: rows.length };
   for (const [mode, value] of Object.entries(modes)) $(`mode-${mode}`).textContent = count(value);
@@ -163,11 +202,11 @@ function renderSummary() {
 // ---- list ---------------------------------------------------------------------
 // Report index -> position of its duplicate group (groups are sorted by redundant bytes).
 function duplicateGroups() {
-  const groups = state.meta?.similarGroups || [];
+  const groups = similarGroups();
   if (state.groupSource !== groups) { state.groupSource = groups; state.groupOf = new Map(); groups.forEach((g, rank) => g.members.forEach(i => state.groupOf.set(i, rank))); }
   return state.groupOf;
 }
-function similarityGroup(r) { return state.meta?.similarGroups?.[duplicateGroups().get(indexOf(r))]; }
+function similarityGroup(r) { return similarGroups()[duplicateGroups().get(indexOf(r))]; }
 function groupScoreRange(group) {
   const comparisons = group.comparisons?.slice(1);
   if (!comparisons?.length || comparisons.length !== group.members.length - 1 || comparisons.some(c => !Number.isFinite(c.score))) return null;
@@ -187,10 +226,10 @@ const MODE_FILTERS = {
 function applyFilters() {
   const query = $('search').value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
   const format = $('format-filter').value, sort = $('sort').value;
-  state.filtered = state.records.filter(r => r && MODE_FILTERS[state.mode](r) && (format === 'all' || r.resource?.format === format)
+  state.filtered = state.records.filter((r, index) => r && !state.missing.has(index) && MODE_FILTERS[state.mode](r) && (format === 'all' || r.resource?.format === format)
     && query.every(q => `${pathText(r)} ${r.resource?.format} ${r.resource?.kind}`.toLocaleLowerCase().includes(q)));
   if (state.mode === 'duplicates') {
-    state.filtered = similarGroupRows(state.records, state.meta?.similarGroups || [], new Set(state.filtered.map(indexOf)));
+    state.filtered = similarGroupRows(state.records, similarGroups(), new Set(state.filtered.map(indexOf)));
     const byGroup = {
       savings: (a, b) => similarityGroup(b).redundant_bytes - similarityGroup(a).redundant_bytes,
       size: (a, b) => groupBytes(similarityGroup(b)) - groupBytes(similarityGroup(a)),

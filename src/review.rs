@@ -197,6 +197,59 @@ impl Review {
         serde_json::Value::Object(states)
     }
 
+    /// Presence only: do not re-hash images or recovery blobs on a periodic poll.
+    /// Indexes remain those of the immutable analysis and transaction journals.
+    pub(crate) fn missing_resources(&self) -> Result<Vec<usize>> {
+        let root =
+            fs::symlink_metadata(&self.report.root).context("project directory unavailable")?;
+        ensure!(
+            root.is_dir() && !root.file_type().is_symlink(),
+            "project directory unavailable"
+        );
+        let mut missing = Vec::new();
+        for (index, row) in self.report.resources.iter().enumerate() {
+            if !confirmed_missing(&self.report.root, &row.resource.path) {
+                continue;
+            }
+            let journal = Path::new("operations")
+                .join(index.to_string())
+                .join("transaction.json");
+            let converted = (|| -> Result<bool> {
+                let path = contained_file(&self.directory, &journal)?;
+                let transaction: Transaction = serde_json::from_slice(&bounded_read(&path)?)?;
+                ensure!(
+                    matches!(transaction.schema_version, 1..=3)
+                        && transaction.root == self.report.root
+                        && transaction.resource == index,
+                    "invalid transaction"
+                );
+                let candidate = row
+                    .candidates
+                    .get(transaction.candidate)
+                    .context("invalid candidate")?;
+                ensure!(
+                    !candidate.format.is_empty()
+                        && candidate.format.bytes().all(|b| b.is_ascii_alphanumeric()),
+                    "invalid candidate format"
+                );
+                let target = row.resource.path.with_extension(&candidate.format);
+                // This metadata is only a display hint. Apply/restore still perform
+                // their full journal, artifact and source integrity checks.
+                Ok(target != row.resource.path
+                    && transaction
+                        .changes
+                        .iter()
+                        .any(|c| c.path == target && c.after.is_some())
+                    && !confirmed_missing(&self.report.root, &target))
+            })()
+            .unwrap_or(false);
+            if !converted {
+                missing.push(index);
+            }
+        }
+        Ok(missing)
+    }
+
     fn prepare(
         &self,
         index: usize,
@@ -858,6 +911,15 @@ impl Review {
         );
         Ok(())
     }
+}
+
+// Permission errors and unsafe paths are not evidence of deletion.
+fn confirmed_missing(root: &Path, relative: &Path) -> bool {
+    contained_file(root, relative).err().is_some_and(|error| {
+        error
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.kind() == std::io::ErrorKind::NotFound)
+    })
 }
 
 fn blob(directory: &Path, digest: &str) -> Result<Vec<u8>> {

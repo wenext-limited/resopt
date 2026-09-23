@@ -60,6 +60,8 @@ resopt web /path/to/project
 
 resopt opens your browser on a page served from `127.0.0.1` only. The printed URL contains a session key; the page and its data are not served without it. Results stream in as files finish. When analysis completes you can compare candidates, apply a change, restore it, or batch-apply under a policy you choose.
 
+After analysis completes, live sessions check file presence every two seconds. Deleted resources disappear from the list, counts and similarity groups; files returned to their original paths reappear. New files and changed image contents still require re-analysis. Static HTML reports remain snapshots.
+
 The terminal prints the report directory. It holds the report and the restore backups — keep it for as long as you may want to undo changes. To reopen it later (open the URL it prints):
 
 ```sh

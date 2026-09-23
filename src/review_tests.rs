@@ -495,3 +495,41 @@ fn created_files_appear_complete_or_not_at_all() {
     assert_eq!(fs::read(&path).unwrap(), b"complete");
     assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
 }
+
+#[test]
+fn missing_resources_follow_deletion_and_reappearance_without_rewriting_the_report() {
+    let (root, out, review, original) = fixture("png", false);
+    let snapshot = fs::read(out.path().join("analysis.json")).unwrap();
+    assert!(review.missing_resources().unwrap().is_empty());
+    fs::remove_file(root.path().join("picture.png")).unwrap();
+    assert_eq!(review.missing_resources().unwrap(), vec![0]);
+    assert!(
+        crate::batch::plan(&review, &crate::BatchPolicy::default())
+            .unwrap()
+            .items
+            .is_empty()
+    );
+    fs::write(root.path().join("picture.png"), original).unwrap();
+    assert!(review.missing_resources().unwrap().is_empty());
+    assert_eq!(
+        fs::read(out.path().join("analysis.json")).unwrap(),
+        snapshot
+    );
+}
+
+#[test]
+fn missing_resources_keep_converted_targets_and_reject_an_unavailable_project() {
+    let (root, _out, review, _) = fixture("webp", false);
+    // A real resopt conversion removes the PNG path and creates its WebP target.
+    let preview = review.preview(0, 0).unwrap();
+    review
+        .apply_reviewed(0, 0, true, preview["plan_token"].as_str())
+        .unwrap();
+    assert!(!root.path().join("picture.png").exists());
+    assert!(root.path().join("picture.webp").is_file());
+    assert!(review.missing_resources().unwrap().is_empty());
+    fs::remove_file(root.path().join("picture.webp")).unwrap();
+    assert_eq!(review.missing_resources().unwrap(), vec![0]);
+    fs::remove_dir_all(root.path()).unwrap();
+    assert!(review.missing_resources().is_err());
+}

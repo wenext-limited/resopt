@@ -7,7 +7,7 @@ const vm = require('node:vm');
 const ui = name => fs.readFileSync(path.join(__dirname, '../src/ui', name), 'utf8');
 const FILES = ['core.js', 'i18n.js', 'app.js', 'compare.js', 'detail.js', 'archive.js', 'effects.js', 'batch.js'];
 const api = vm.runInNewContext(`${ui('core.js')}\n${ui('i18n.js')}
-({applyVapAlpha, similarGroupRows, differencePixels, formatSize, assetUrl, warningKind, warningKinds, blockedReason, recommendedSavings, hasWarningCandidate, displayableInBrowser, pickLocale, translate, issueText, MESSAGES})`);
+({remainingSimilarGroups, applyVapAlpha, similarGroupRows, differencePixels, formatSize, assetUrl, warningKind, warningKinds, blockedReason, recommendedSavings, hasWarningCandidate, displayableInBrowser, pickLocale, translate, issueText, MESSAGES})`);
 
 test('the embedded UI parses as one script, exactly as the binary ships it', () => {
   assert.doesNotThrow(() => new vm.Script(`'use strict';(() => {${FILES.map(ui).join('\n')}\nstart();})();`));
@@ -258,4 +258,34 @@ test('VAP alpha reconstruction retains RGB and uses the mask red channel', () =>
   const alpha = new Uint8ClampedArray([0, 99, 99, 255, 128, 99, 99, 255]);
   assert.deepEqual([...api.applyVapAlpha(rgb, alpha)], [10, 20, 30, 0, 40, 50, 60, 128]);
   assert.throws(() => api.applyVapAlpha(rgb, new Uint8ClampedArray(4)), /size mismatch/);
+});
+
+
+test('deleted similarity members disappear without reusing scores against a new reference', () => {
+  const records = [0, 1, 2].map(i => ({ sha256: String(i), image: { width: 10, height: 10 }, resource: { bytes: 30 - i * 10 } }));
+  const group = { kind: 'similar', members: [0, 1, 2], comparisons: [{ score: 100 }, { score: 99 }, { score: 98 }], redundant_bytes: 30 };
+  const partial = api.remainingSimilarGroups([group], records, new Set([1]));
+  assert.deepEqual([...partial[0].members], [0, 2]); assert.equal(partial[0].comparisons[1].score, 98); assert.equal(partial[0].redundant_bytes, 10);
+  const referenceDeleted = api.remainingSimilarGroups([group], records, new Set([0]));
+  assert.deepEqual([...referenceDeleted[0].members], [1, 2]); assert.equal(referenceDeleted[0].comparisons.length, 0);
+  assert.equal(api.remainingSimilarGroups([group], records, new Set([0, 1])).length, 0);
+  assert.equal(api.remainingSimilarGroups([group], records, new Set())[0], group);
+  assert.deepEqual(group.members, [0, 1, 2]);
+});
+
+test('ready-state presence polling refreshes only changed file lists and keeps retrying', async () => {
+  const source = ui('app.js');
+  const start = source.indexOf('async function pollPresence'); const end = source.indexOf('function similarGroups', start);
+  const state = { records: [{}, {}], missing: new Set(), presenceError: '', busy: false };
+  let response = { missing: [] }, refreshes = 0, scheduled = 0;
+  const { pollPresence } = vm.runInNewContext(`${source.slice(start, end)}; ({pollPresence})`, {
+    state, api: async path => { if (response instanceof Error) throw response; return path === '/api/state' ? {} : response; },
+    renderStatus: () => {}, refresh: () => refreshes++, setTimeout: (_, delay) => { assert.equal(delay, 2000); scheduled++; },
+  });
+  await pollPresence(); assert.equal(refreshes, 0);
+  response = { missing: [0] }; await pollPresence(); assert.equal(refreshes, 1); assert.equal(state.missing.has(0), true);
+  await pollPresence(); assert.equal(refreshes, 1, 'do not reset the inspector on unchanged ticks');
+  response = new Error('project unavailable'); await pollPresence(); assert.equal(state.missing.has(0), true);
+  response = { missing: [] }; await pollPresence(); assert.equal(refreshes, 2); assert.equal(state.missing.size, 0); assert.equal(state.presenceError, '');
+  assert.equal(scheduled, 5);
 });
