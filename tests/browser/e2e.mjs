@@ -169,6 +169,19 @@ try {
     await browser.evaluate(`(() => { const s = document.getElementById('search'); s.value = ''; s.dispatchEvent(new Event('input')); })()`);
   });
 
+  await step('translations view lists catalog coverage and argument issues', async () => {
+    await click('[data-mode="translations"]');
+    assert.equal(await number('#mode-translations'), 1);
+    await click('.resource-row');
+    await browser.waitFor(`document.querySelector('.localization-block')`);
+    assert.match(await text('.localization-block'), /2 keys · 2 languages/);
+    assert.match(await text('.loc-issue'), /Argument type differs.*fans.*zh-Hant/s);
+    assert.match(await text('.loc-args'), /%1\$d.*%1\$s/);
+    assert.equal(await browser.evaluate(`document.querySelectorAll('.coverage tbody tr').length`), 2);
+    await browser.screenshot(join(shots, 'translations.png'));
+    await click('[data-mode="candidates"]');
+  });
+
   await step('warning candidates need an explicit, separately worded confirmation', async () => {
     await click('[data-mode="warnings"]');
     assert.ok(await number('#mode-warnings') > 0, 'fixture should yield warnings at --min-score 90');

@@ -5,9 +5,9 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 const ui = name => fs.readFileSync(path.join(__dirname, '../src/ui', name), 'utf8');
-const FILES = ['core.js', 'i18n.js', 'app.js', 'compare.js', 'detail.js', 'archive.js', 'effects.js', 'batch.js'];
+const FILES = ['core.js', 'i18n.js', 'app.js', 'compare.js', 'detail.js', 'archive.js', 'localization.js', 'effects.js', 'batch.js'];
 const api = vm.runInNewContext(`${ui('core.js')}\n${ui('i18n.js')}
-({remainingSimilarGroups, applyVapAlpha, similarGroupRows, differencePixels, formatSize, assetUrl, warningKind, warningKinds, blockedReason, recommendedSavings, hasWarningCandidate, displayableInBrowser, pickLocale, translate, issueText, MESSAGES})`);
+({localizationOwnLanguage, localizationIssueTotal, filterLocalizationIssues, translatedShare, remainingSimilarGroups, applyVapAlpha, similarGroupRows, differencePixels, formatSize, assetUrl, warningKind, warningKinds, blockedReason, recommendedSavings, hasWarningCandidate, displayableInBrowser, pickLocale, translate, issueText, MESSAGES})`);
 
 test('the embedded UI parses as one script, exactly as the binary ships it', () => {
   assert.doesNotThrow(() => new vm.Script(`'use strict';(() => {${FILES.map(ui).join('\n')}\nstart();})();`));
@@ -152,8 +152,9 @@ test('every translation key used by the UI exists', () => {
   const used = new Set([...source.matchAll(/\bt\('([A-Za-z0-9_]+)'/g)].map(m => m[1]));
   const report = fs.readFileSync(path.join(__dirname, '../src/report.rs'), 'utf8');
   for (const match of report.matchAll(/data-i18n(?:-label|-placeholder)?="([A-Za-z0-9_]+)"/g)) used.add(match[1]);
-  for (const mode of ['Candidates', 'Warnings', 'Duplicates', 'Applied', 'Images', 'Unsupported', 'Failed', 'All']) used.add(`mode${mode}`);
+  for (const mode of ['Candidates', 'Warnings', 'Duplicates', 'Applied', 'Images', 'Translations', 'Unsupported', 'Failed', 'All']) used.add(`mode${mode}`);
   for (const kind of ['identical', 'resized', 'similar']) used.add(`dup_${kind}`);
+  for (const kind of ['placeholder_type', 'placeholder_count', 'empty_value']) used.add(`locKind_${kind}`);
   for (const mode of ['two-up', 'swipe', 'onion', 'difference']) used.add(`compareMode_${mode}`);
   const missing = [...used].filter(key => !api.MESSAGES.en[key]);
   assert.deepEqual(missing, []);
@@ -288,4 +289,29 @@ test('ready-state presence polling refreshes only changed file lists and keeps r
   response = new Error('project unavailable'); await pollPresence(); assert.equal(state.missing.has(0), true);
   response = { missing: [] }; await pollPresence(); assert.equal(refreshes, 2); assert.equal(state.missing.size, 0); assert.equal(state.presenceError, '');
   assert.equal(scheduled, 5);
+});
+
+test('localization issue totals, filters and coverage shares', () => {
+  const issues = [
+    { kind: 'placeholder_type', key: 'common_fans_num', language: 'zh-Hant', expected: ['%1$d'], found: ['%1$s'], text: '%@個粉絲' },
+    { kind: 'empty_value', key: 'bonus', language: 'ar', text: '' },
+  ];
+  assert.equal(api.localizationIssueTotal({ localization: { issue_counts: { placeholder_type: 3, empty_value: 2 } } }), 5);
+  assert.equal(api.localizationIssueTotal({ resource: {} }), 0);
+  const table = { source_language: 'default', issue_counts: { placeholder_type: 3 }, issues: [],
+    languages: [{ language: 'default', issues: 0 }, { language: 'ar', issues: 2 }, { language: 'bn', issues: 0 }],
+    files: [{ path: 'res/values/strings.xml', language: 'default' }, { path: 'res/values-ar/strings.xml', language: 'ar' }, { path: 'res/values-bn/strings.xml', language: 'bn' }] };
+  const file = path => ({ resource: { path }, localization: table });
+  assert.equal(api.localizationOwnLanguage(file('res/values/strings.xml')), null);
+  assert.equal(api.localizationOwnLanguage(file('res/values-ar/strings.xml')), 'ar');
+  assert.equal(api.localizationIssueTotal(file('res/values/strings.xml')), 3);
+  assert.equal(api.localizationIssueTotal(file('res/values-ar/strings.xml')), 2);
+  assert.equal(api.localizationIssueTotal(file('res/values-bn/strings.xml')), 0);
+  assert.deepEqual(api.filterLocalizationIssues(issues, 'FANS zh', '').map(i => i.key), ['common_fans_num']);
+  assert.deepEqual(api.filterLocalizationIssues(issues, '%1$s', '').map(i => i.key), ['common_fans_num']);
+  assert.deepEqual(api.filterLocalizationIssues(issues, '', 'empty_value').map(i => i.key), ['bonus']);
+  assert.equal(api.filterLocalizationIssues(undefined, 'x', '').length, 0);
+  assert.equal(api.translatedShare({ translated: 762 }, 766).toFixed(3), '0.995');
+  assert.equal(api.translatedShare({ translated: 1 }, 0), null);
+  assert.equal(api.issueText('en', 'localization_parse_failed: unexpected end'), 'Could not read this localization file: unexpected end');
 });

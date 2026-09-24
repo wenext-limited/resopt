@@ -25,6 +25,7 @@ server ─▶ loopback HTTP API over analysis + review + batch ─▶ ui/*.js
 | `android`, `android_project`, `android_refs`, `aapt` | Resource path semantics, `minSdk` detection, usage index, optional AAPT2 compilation. |
 | `analysis`, `analyze_image` | Scheduling, duplicate sharing, cancellation, memory budget, candidate generation and verification. |
 | `image_backend`, `webp_backend`, `optimizer`, `png_pixels`, `quality` | Codecs and metrics. ImageIO is macOS-only; oxipng and libwebp are bundled everywhere. |
+| `localization`, `localization_checks` | Read-only localization review through `langcodec`: groups `.lproj` and Android `values-*` files into tables and reports coverage, empty values and placeholder mismatches. Runs on its own thread next to the image workers. |
 | `svga` | SVGA optimization policy on top of the `svga` crate: refusals, lossless image replacement, `verify()` on final bytes. |
 | `svga_render` | Self-contained SVGA frame renderer (`svga` + `tiny-skia` + `svgtypes`): poster thumbnails during analysis and on-demand frames for the live player. Semantics follow the Android/iOS reference players and are documented at the top of the module. Written to be liftable into its own crate. |
 | `review` | Verifies and applies exactly one candidate as a recoverable transaction; restores it. |

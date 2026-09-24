@@ -414,6 +414,7 @@ mod tests {
             archive: None,
             vap: None,
             pag: None,
+            localization: None,
             animation: None,
         }
     }

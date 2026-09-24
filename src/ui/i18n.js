@@ -83,6 +83,13 @@ const MESSAGES = {
     issue_not_encoded: 'Not encoded: quality {0} was already not smaller than the original, so a higher quality cannot be',
     issue_palette: 'Reduced to a palette of {0} colours (lossy); the file stays a PNG',
     issue_backend: 'Listed in the inventory; resopt has no optimizer for this type yet', issue_macos: 'Decoding this format needs Apple ImageIO (macOS)', issue_min_sdk: 'WebP here needs API {1}+, but minSdk is {0}', issue_metadata: 'Not carried into the new file: {0}',
+    modeTranslations: 'Translations', locTitle: 'Translations', locCoverage: 'Coverage by language', locReadOnly: 'Inspection only', locSummary: '{0} keys · {1} languages · compared with {2}',
+    locStale: '{0} keys are marked stale by Xcode: no longer found in code, so they may be removable.', locFiles: 'Files in this table ({0})', locAndroidDefault: 'default (values/)',
+    locLanguage: 'Language', locTranslated: 'Translated', locMissing: 'Missing', locMissingHint: 'Keys of the source language without a value in this language', locEmpty: 'Empty', locReview: 'Needs review', locReviewHint: 'Translated but marked “needs review” or “stale”', locExtra: 'Extra', locExtraHint: 'Keys only this language has; the source language no longer defines them', locSource: 'source',
+    locIssues: 'Issues ({0})', locNoIssues: 'No placeholder mismatches or empty values.', locNoOwnIssues: 'No placeholder mismatches or empty values in this language.', locOwnIssues: 'Listing issues for {0}; the source file lists every language.', locIssueLimit: 'Listing the first {0}; the counts above include all.',
+    locKind_placeholder_type: 'Argument type differs', locKind_placeholder_count: 'Arguments differ', locKind_empty_value: 'Empty value', locSearch: 'Search keys, languages or text…', locKind: 'Issue type', locAllKinds: 'All issues',
+    locArguments: 'Source {0} → this language {1}', locNone: 'none', locIssueCount: '{0} issues', locColIssues: 'Issues', locSortIssues: 'Issues ↓',
+    issue_localization_parse_failed: 'Could not read this localization file: {0}',
   },
   'zh-CN': {
     title: '资源分析', live: '本地会话 · 修改需逐项确认', offline: '离线报告 · 仅供审阅',
@@ -166,6 +173,13 @@ const MESSAGES = {
     issue_not_encoded: '未编码：质量 {0} 已经不比原文件小，更高质量不可能更小',
     issue_palette: '颜色缩减为 {0} 色调色板（有损）；文件仍为 PNG',
     issue_backend: '已纳入清单；resopt 暂无此类型的优化器', issue_macos: '解码此格式需要 Apple ImageIO（macOS）', issue_min_sdk: '此处使用 WebP 需要 API {1}+，但 minSdk 为 {0}', issue_metadata: '不会带入新文件：{0}',
+    modeTranslations: '翻译', locTitle: '翻译', locCoverage: '各语言覆盖情况', locReadOnly: '仅检查', locSummary: '{0} 个键 · {1} 种语言 · 以 {2} 为基准比较',
+    locStale: '{0} 个键被 Xcode 标记为过期：代码中已找不到，可能可以删除。', locFiles: '此表的文件（{0}）', locAndroidDefault: '默认（values/）',
+    locLanguage: '语言', locTranslated: '已翻译', locMissing: '缺失', locMissingHint: '基准语言有、但此语言没有值的键', locEmpty: '空值', locReview: '待审核', locReviewHint: '已翻译，但标记为“需审核”或“过期”', locExtra: '多余', locExtraHint: '只有此语言有的键；基准语言已不再定义', locSource: '基准',
+    locIssues: '问题（{0}）', locNoIssues: '没有占位符不一致或空值。', locNoOwnIssues: '此语言没有占位符不一致或空值。', locOwnIssues: '仅列出 {0} 的问题；基准语言文件会列出所有语言。', locIssueLimit: '仅列出前 {0} 条；上方计数包含全部。',
+    locKind_placeholder_type: '参数类型不一致', locKind_placeholder_count: '参数不一致', locKind_empty_value: '空值', locSearch: '搜索键、语言或文本…', locKind: '问题类型', locAllKinds: '全部问题',
+    locArguments: '基准 {0} → 此语言 {1}', locNone: '无', locIssueCount: '{0} 个问题', locColIssues: '问题', locSortIssues: '问题数 ↓',
+    issue_localization_parse_failed: '无法读取此本地化文件：{0}',
   },
 };
 
@@ -201,6 +215,8 @@ function issueText(locale, reason) {
   if (palette) return translate(locale, 'issue_palette', [palette[1]]);
   const preview = text.match(/^preview_unavailable: (.+)$/);
   if (preview) return translate(locale, 'issue_preview_unavailable', [preview[1]]);
+  const localization = text.match(/^localization_parse_failed: (.+)$/);
+  if (localization) return translate(locale, 'issue_localization_parse_failed', [localization[1]]);
   const metadata = text.match(/^metadata_not_carried_over: (.+)$/);
   if (metadata) return translate(locale, 'issue_metadata', [metadata[1]]);
   return text;

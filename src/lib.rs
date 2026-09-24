@@ -15,6 +15,12 @@ mod archive;
 #[cfg(feature = "native")]
 pub use archive::{ArchiveEntry, ArchiveInfo};
 #[cfg(feature = "native")]
+mod localization;
+#[cfg(feature = "native")]
+mod localization_checks;
+#[cfg(feature = "native")]
+pub use localization::{LanguageCoverage, LocalizationFile, LocalizationInfo, LocalizationIssue};
+#[cfg(feature = "native")]
 mod media;
 #[cfg(feature = "native")]
 mod pag;

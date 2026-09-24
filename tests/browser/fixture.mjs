@@ -54,3 +54,8 @@ write('App/Assets.xcassets/Hero.imageset/Contents.json', JSON.stringify({ images
 write('App/Assets.xcassets/Hero.imageset/hero@2x.png', png(120, 80, gradient));
 write('App/Assets.xcassets/Hero.imageset/hero@3x.png', png(180, 120, gradient));
 write('App/View.swift', 'let image = UIImage(named: "Hero")\n');
+// A string catalog whose Traditional Chinese value formats a number as an object.
+write('App/Localizable.xcstrings', JSON.stringify({ sourceLanguage: 'en', version: '1.0', strings: {
+  fans: { localizations: { en: { stringUnit: { state: 'translated', value: '%d fans' } }, 'zh-Hant': { stringUnit: { state: 'translated', value: '%@個粉絲' } } } },
+  title: { localizations: { en: { stringUnit: { state: 'translated', value: 'Rooms' } } } },
+} }, null, 2));

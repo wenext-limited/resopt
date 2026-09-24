@@ -116,3 +116,32 @@ function remainingSimilarGroups(groups, records, missing) {
     }];
   });
 }
+
+// The language a translation file of a multi-file table holds; null for the
+// source-language file and for single catalogs, which cover every language.
+function localizationOwnLanguage(record) {
+  const info = record && record.localization;
+  const file = info && (info.files || []).find(f => f.path === String(record.resource?.path || ''));
+  return file && file.language !== info.source_language ? file.language : null;
+}
+
+// Issues a row answers for: its own language in a translation file, else the whole table.
+function localizationIssueTotal(record) {
+  const info = record && record.localization;
+  if (!info) return 0;
+  const own = localizationOwnLanguage(record);
+  if (own) return (info.languages || []).find(l => l.language === own)?.issues || 0;
+  return Object.values(info.issue_counts || {}).reduce((total, value) => total + (Number(value) || 0), 0);
+}
+
+// Issues matching every search word (key, language, text or placeholder) and the kind, if one is chosen.
+function filterLocalizationIssues(issues, query, kind) {
+  const words = String(query || '').trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+  return (issues || []).filter(issue => (!kind || issue.kind === kind)
+    && words.every(word => [issue.key, issue.language, issue.text, ...(issue.expected || []), ...(issue.found || [])].join(' ').toLocaleLowerCase().includes(word)));
+}
+
+// Share of the table's keys this language translates, 0-1; null without keys.
+function translatedShare(language, keys) {
+  return keys > 0 && language ? Math.min(1, (language.translated || 0) / keys) : null;
+}

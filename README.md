@@ -19,6 +19,7 @@ Your files never leave your computer. Analysis never modifies your project.
 | ZIP resource packages | Lossless embedded-PNG recompression in eligible packages | Searchable contents, stored/expanded sizes, image previews |
 | VAP inside MP4 | Preview only | Reconstructed transparency, playback and frame scrubbing |
 | PAG / TCMP4 | Preview only; recognized by PAG content signature | Playback, frame scrubbing, editable-text/image and video counts |
+| Localization: `.xcstrings`, `.strings`, `.stringsdict`, Android `strings.xml` | Inspection only | Coverage per language, empty values, placeholder mismatches with the source language, Xcode stale keys |
 | Audio, ordinary video, fonts, SVG, PDF, recognized Lottie JSON | Inventory only | Format and size; optional audio/video metadata via `ffprobe` |
 
 Optimization and preview support have different limits. See [platform support](#platform-support) and [important limits](#important-limits).
@@ -189,7 +190,8 @@ A browser-only edition (static site, WebAssembly) optimizes individual PNG files
 - SVGA 1.x (zip) files, and SVGA files containing audio or unknown fields, are reported as unsupported rather than rewritten (they are still previewed). SVGA playback draws bitmaps, shapes, clip paths and mattes; dynamic text/images set by app code at runtime and JPEG-encoded embedded images are not drawn.
 - ZIP inspection is bounded to 64 MiB input, 10,000 entries and 256 MiB expanded contents. Up to 32 large images receive previews. Nested archives are listed but not recursively rewritten; external signatures or hashes still require the package publisher.
 - VAP/PAG playback depends on browser and decoder compatibility and previews original content only. It does not establish native-device pixel parity. No PAG/VAP transcoding, animated WebP optimization, audio transcoding or font subsetting is offered.
-- Archive and effect inspection currently bypass the image-result cache.
+- Localization review compares languages within one table and never edits strings. Plural forms are not compared for arguments, and `.xcstrings` device variations count as missing. [Details](docs/localization.md).
+- Archive, effect and localization inspection currently bypass the image-result cache.
 - HEIC candidates cannot be displayed by most browsers; the comparison uses a PNG preview and links the file so you can open it in Preview or Safari.
 
 Run `resopt --help` or `resopt <command> --help` for every option.

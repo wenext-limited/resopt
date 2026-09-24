@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+### Added
+- **Localization review.** `.xcstrings`, `.strings`, `.stringsdict` and Android `values*/*.xml` string files are read with langcodec 0.14.1 and grouped into tables across `.lproj` and `values-*` folders. Each table shows per-language coverage (translated, missing, empty, needs review, extra keys), Xcode stale keys, and issues against the source language: argument type mismatches such as `%d` versus `%@`, missing or added arguments, and empty values. A **Translations** view lists localization files ranked by issues. Inspection only; nothing is written. [Details](docs/localization.md).
+
 ## 0.8.0 · 2026-09-23
 
 ### Added

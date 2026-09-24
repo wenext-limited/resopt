@@ -219,6 +219,9 @@ pub struct ResourceAnalysis {
     pub vap: Option<crate::vap::VapInfo>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pag: Option<crate::pag::PagInfo>,
+    /// Translation coverage and placeholder checks of a localization file.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub localization: Option<crate::localization::LocalizationInfo>,
     /// Canvas, timing and size of an animation, when it could be parsed.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub animation: Option<AnimationInfo>,
@@ -244,6 +247,7 @@ impl ResourceAnalysis {
             archive: None,
             vap: None,
             pag: None,
+            localization: None,
             animation: None,
         }
     }
@@ -454,7 +458,11 @@ pub(crate) fn analyze_with_observer(
     // Rows that need no image work are published first so the inventory is
     // visible immediately; images follow largest-first because they hold most
     // of the savings.
-    let (mut work, settled): (Vec<usize>, Vec<usize>) = (0..total).partition(|&index| {
+    // Localization files are compared across languages, so they are parsed
+    // together on one thread next to the image workers.
+    let (localization, rest): (Vec<usize>, Vec<usize>) =
+        (0..total).partition(|&index| crate::localization::is_candidate(&inventory.assets[index]));
+    let (mut work, settled): (Vec<usize>, Vec<usize>) = rest.into_iter().partition(|&index| {
         let resource = &inventory.assets[index];
         resource.support == "optimizable"
             || matches!(
@@ -620,6 +628,21 @@ pub(crate) fn analyze_with_observer(
     let next = AtomicUsize::new(0);
     let finished = Mutex::new(Vec::with_capacity(work.len()));
     std::thread::scope(|scope| {
+        if !localization.is_empty() {
+            scope.spawn(|| {
+                let rows = timings.time(Phase::Localization, || {
+                    localization_rows(&inventory, &localization, control)
+                });
+                let rows: Vec<_> = rows
+                    .into_iter()
+                    .map(|(index, row)| finish(index, row))
+                    .collect();
+                finished
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner())
+                    .extend(rows);
+            });
+        }
         for _ in 0..workers.min(work.len()).max(1) {
             scope.spawn(|| {
                 while let Some(&index) = work.get(next.fetch_add(1, Ordering::Relaxed)) {
@@ -683,6 +706,50 @@ pub(crate) fn analyze_with_observer(
     write_new(&out.join("analysis.json"), &serde_json::to_vec(&report)?)?;
     write_new(&out.join("report.html"), html.as_bytes())?;
     Ok(report)
+}
+
+/// Rows for localization candidates. Files that turn out not to hold strings
+/// get their ordinary inventory row.
+fn localization_rows(
+    inventory: &ResourceInventory,
+    indexes: &[usize],
+    control: &AnalysisControl,
+) -> Vec<(usize, ResourceAnalysis)> {
+    use crate::localization::{Parsed, parse, rows};
+    // Tables span files, so a stop request applies to the whole pass: a
+    // partial table would compare languages against the wrong source.
+    if control.is_cancelled() {
+        return indexes
+            .iter()
+            .map(|&index| {
+                (
+                    index,
+                    ResourceAnalysis::new(&inventory.assets[index], "not_analyzed"),
+                )
+            })
+            .collect();
+    }
+    let mut parsed = vec![];
+    let mut other = vec![];
+    for &index in indexes {
+        let resource = &inventory.assets[index];
+        match parse(&inventory.root, resource, index) {
+            Parsed::File(file) => parsed.push(file),
+            Parsed::NotLocalization => other.push((index, settled_row(resource))),
+            Parsed::Unsupported(reason) => {
+                let mut row = ResourceAnalysis::new(resource, "unsupported");
+                row.issues.push(reason);
+                other.push((index, row));
+            }
+            Parsed::Failed(error) => {
+                let mut failed = ResourceAnalysis::new(resource, "failed");
+                failed.issues.push(error);
+                other.push((index, failed));
+            }
+        }
+    }
+    other.extend(rows(&inventory.assets, parsed));
+    other
 }
 
 fn is_media(resource: &Resource) -> bool {

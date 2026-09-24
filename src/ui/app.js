@@ -181,7 +181,7 @@ function renderSummary() {
   const options = state.meta?.options;
   $('scope-note').textContent = options ? t('scope', size(rows.reduce((n, r) => n + (r.resource?.bytes || 0), 0)), (options.qualities || []).join(' / '), options.min_score ?? '—') : '';
   const modes = { candidates: opportunities.length, warnings: rows.filter(hasWarningCandidate).length, duplicates: similarGroups().length, applied: rows.filter(isApplied).length,
-    images: rows.filter(r => r.resource?.kind === 'image').length, unsupported: rows.filter(r => ['unsupported', 'inventory_only'].includes(r.status)).length,
+    images: rows.filter(r => r.resource?.kind === 'image').length, translations: rows.filter(r => r.localization).length, unsupported: rows.filter(r => ['unsupported', 'inventory_only'].includes(r.status)).length,
     failed: rows.filter(r => r.status === 'failed').length, all: rows.length };
   for (const [mode, value] of Object.entries(modes)) $(`mode-${mode}`).textContent = count(value);
   const formats = [...new Set(rows.map(r => r.resource?.format).filter(Boolean))].sort();
@@ -220,7 +220,7 @@ function groupScoreText(group) {
 }
 const MODE_FILTERS = {
   candidates: r => recommendedSavings(r) > 0, warnings: hasWarningCandidate, duplicates: r => duplicateGroups().has(indexOf(r)), applied: isApplied,
-  images: r => r.resource?.kind === 'image', unsupported: r => ['unsupported', 'inventory_only'].includes(r.status),
+  images: r => r.resource?.kind === 'image', translations: r => !!r.localization, unsupported: r => ['unsupported', 'inventory_only'].includes(r.status),
   failed: r => r.status === 'failed', all: () => true,
 };
 function applyFilters() {
@@ -239,7 +239,8 @@ function applyFilters() {
     state.filtered.sort((a, b) => byGroup(a, b) || duplicateGroups().get(indexOf(a)) - duplicateGroups().get(indexOf(b)));
     return;
   }
-  const by = { savings: (a, b) => recommendedSavings(b) - recommendedSavings(a), size: (a, b) => (b.resource?.bytes || 0) - (a.resource?.bytes || 0),
+  // In the translations view the savings order ranks tables by issues instead.
+  const by = { savings: state.mode === 'translations' ? (a, b) => localizationIssueTotal(b) - localizationIssueTotal(a) : (a, b) => recommendedSavings(b) - recommendedSavings(a), size: (a, b) => (b.resource?.bytes || 0) - (a.resource?.bytes || 0),
     name: (a, b) => basename(pathText(a)).localeCompare(basename(pathText(b))), score: (a, b) => lowestScore(a) - lowestScore(b) }[sort];
   state.filtered.sort((a, b) => by(a, b) || pathText(a).localeCompare(pathText(b)));
 }
@@ -279,8 +280,8 @@ function preferredCandidate(r) {
 function renderList() {
   document.querySelector('.list-head [data-i18n="colResource"]').textContent = t(state.mode === 'duplicates' ? 'dupGroups' : 'colResource');
   document.querySelector('.list-head [data-i18n="colSize"]').textContent = t(state.mode === 'duplicates' ? 'dupTotalSize' : 'colSize');
-  $('sort').querySelector('[value="savings"]').textContent = t(state.mode === 'duplicates' ? 'dupSortGroup' : 'sortSavings');
-  document.querySelector('.list-head [data-i18n="colSavings"]').textContent = t(state.mode === 'duplicates' ? 'dupSimilarity' : 'colSavings');
+  document.querySelector('.list-head [data-i18n="colSavings"]').textContent = t(state.mode === 'duplicates' ? 'dupSimilarity' : state.mode === 'translations' ? 'locColIssues' : 'colSavings');
+  $('sort').querySelector('[value="savings"]').textContent = t(state.mode === 'duplicates' ? 'dupSortGroup' : state.mode === 'translations' ? 'locSortIssues' : 'sortSavings');
   const list = $('results'); const focused = document.activeElement?.dataset?.index; list.replaceChildren();
   const start = state.page * PAGE_SIZE, items = state.filtered.slice(start, start + PAGE_SIZE);
   if (!items.length) {
@@ -309,6 +310,7 @@ function renderList() {
     else if (isApplied(r)) cell.append(operationStatus('warning', '!', operationBadge(r)));
     else if (saved) cell.append(sizeNode(saved), el('small', '', `−${formatPercent(saved / (r.resource.bytes || 1))}`));
     else if (hasWarningCandidate(r)) cell.append(el('span', 'badge warn', t('modeWarnings')));
+    else if (localizationIssueTotal(r)) cell.append(el('span', 'badge warn', t('locIssueCount', count(localizationIssueTotal(r)))));
     else cell.append(el('span', '', '—'));
     if (state.mode === 'duplicates') {
       const group = similarityGroup(r), rank = duplicateGroups().get(indexOf(r));

@@ -27,7 +27,7 @@ required-features = ["native"]
 
 [features]
 default = ["native"]
-native = ["dep:zip", "dep:flate2", "dep:svga", "dep:tiny-skia", "dep:svgtypes", "dep:webp", "dep:ignore", "dep:regex", "dep:maud", "dep:tiny_http", "dep:getrandom", "dep:clap", "dep:tempfile", "dep:toml", "dep:walkdir", "dep:xcassets", "dep:rayon", "dep:objc2", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-image-io", "oxipng/parallel"]
+native = ["dep:zip", "dep:flate2", "dep:svga", "dep:tiny-skia", "dep:svgtypes", "dep:webp", "dep:ignore", "dep:regex", "dep:maud", "dep:tiny_http", "dep:getrandom", "dep:clap", "dep:tempfile", "dep:toml", "dep:walkdir", "dep:xcassets", "dep:rayon", "dep:langcodec", "dep:objc2", "dep:objc2-core-foundation", "dep:objc2-core-graphics", "dep:objc2-image-io", "oxipng/parallel"]
 
 [dependencies]
 zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate2"], optional = true }
@@ -54,6 +54,7 @@ webp = { version = "0.3.1", default-features = false, optional = true }
 svga = { version = "0.1.1", features = ["libdeflate"], optional = true }
 tiny-skia = { version = "0.12", default-features = false, features = ["std", "simd"], optional = true }
 svgtypes = { version = "0.16", optional = true }
+langcodec = { version = "=0.14.1", optional = true }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = { version = "0.6", optional = true }

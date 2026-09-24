@@ -41,7 +41,7 @@ function renderDetail() {
   const variants = Array.isArray(r.candidates) ? r.candidates : [], c = variants[state.chosen] || null;
   const heading = el('div', 'detail-heading'), title = el('div');
   title.append(el('div', 'eyebrow', t(`kind_${r.resource?.kind}`)), el('h1', '', basename(pathText(r))));
-  heading.append(title, el('span', `tag ${isOptimized(r) ? 'optimized-status' : r.status === 'failed' ? 'danger' : ''}`, isOptimized(r) ? `✓ ${t('modeApplied')}` : (r.pag || r.vap) ? t('effectReadOnly') : t(`status_${r.status}`)));
+  heading.append(title, el('span', `tag ${isOptimized(r) ? 'optimized-status' : r.status === 'failed' ? 'danger' : ''}`, isOptimized(r) ? `✓ ${t('modeApplied')}` : (r.pag || r.vap) ? t('effectReadOnly') : r.localization ? t('locReadOnly') : t(`status_${r.status}`)));
   pane.append(heading, el('p', 'detail-path', pathText(r)));
   const facts = el('div', 'facts'); facts.append(el('span', '', String(r.resource?.format || '').toUpperCase()), sizeNode(r.resource?.bytes));
   if (r.image) {
@@ -64,6 +64,7 @@ function renderDetail() {
   }
   const android = r.resource?.android;
   if (android) pane.append(el('p', 'android-note', `${t('android')}: ${t('androidInfo', android.area, android.res_type || '—', android.name || '—', android.qualifiers?.length ? android.qualifiers.join('-') : '—')}`));
+  if (r.localization) pane.append(localizationBlock(r));
   if (r.pag) pane.append(pagPlayer(r));
   else if (r.vap) pane.append(vapPlayer(r));
   else if (r.animation) pane.append(animationPlayer(r));

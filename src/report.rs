@@ -90,6 +90,7 @@ fn script() -> String {
         include_str!("ui/compare.js"),
         include_str!("ui/detail.js"),
         include_str!("ui/archive.js"),
+        include_str!("ui/localization.js"),
         include_str!("ui/effects.js"),
         include_str!("ui/batch.js"),
         "start();})();",
@@ -190,7 +191,7 @@ fn toolbar() -> Markup {
     html! {
         section.toolbar aria-label="Filters" {
             div.modes role="group" aria-label="View" {
-                @for mode in ["candidates", "warnings", "duplicates", "applied", "images", "unsupported", "failed", "all"] {
+                @for mode in ["candidates", "warnings", "duplicates", "applied", "images", "translations", "unsupported", "failed", "all"] {
                     button.mode type="button" data-mode=(mode) aria-pressed="false" {
                         span data-i18n={ "mode" (mode[..1].to_uppercase()) (mode[1..]) } {}
                         " " span.mode-count id={ "mode-" (mode) } {}

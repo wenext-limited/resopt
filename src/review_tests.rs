@@ -103,6 +103,7 @@ fn fixture(format: &str, catalog: bool) -> (tempfile::TempDir, tempfile::TempDir
             archive: None,
             vap: None,
             pag: None,
+            localization: None,
             animation: None,
         }],
         status_counts: BTreeMap::new(),

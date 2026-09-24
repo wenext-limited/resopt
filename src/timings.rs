@@ -20,10 +20,11 @@ pub(crate) enum Phase {
     Preview,
     Write,
     Cache,
+    Localization,
     Report,
 }
 
-const PHASES: [(Phase, &str); 13] = [
+const PHASES: [(Phase, &str); 14] = [
     (Phase::Scan, "scan"),
     (Phase::Hash, "hash"),
     (Phase::Decode, "decode"),
@@ -36,6 +37,7 @@ const PHASES: [(Phase, &str); 13] = [
     (Phase::Preview, "preview"),
     (Phase::Write, "write"),
     (Phase::Cache, "cache"),
+    (Phase::Localization, "localization"),
     (Phase::Report, "report"),
 ];
 
